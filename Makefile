@@ -1,58 +1,55 @@
-# MoneroMiner - Linux Makefile
-# Compiles RandomX library and MoneroMiner from Windows codebase
+# MoneroMiner - WebAssembly (Emscripten) Makefile
+# Compiles RandomX library and MoneroMiner for Web environments
 
-CXX = g++
-CC = gcc
+# Substituição para o ecossistema Emscripten
+CXX = em++
+CC = emcc
 
-# Detect CPU vendor for architecture-specific flags
-CPU_VENDOR := $(shell grep -m1 'vendor_id' /proc/cpuinfo 2>/dev/null | grep -o 'AMD\|Intel' || echo unknown)
+# Flags de otimização pesada para WebAssembly (-O3 e LTO são suportados e recomendados)
+CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -flto
+CFLAGS = -O3 -Wall -Wextra -flto
 
-# Compiler flags with AMD Zen optimizations and LTO
-ifeq ($(CPU_VENDOR),AMD)
-CXXFLAGS = -std=c++17 -O3 -march=znver2 -mtune=znver2 -mavx2 -mbmi2 -maes -Wall -Wextra -pthread -flto
-CFLAGS = -O3 -march=znver2 -mtune=znver2 -mavx2 -mbmi2 -maes -Wall -Wextra -flto
-$(info Building with AMD Zen optimizations + LTO)
-else ifeq ($(CPU_VENDOR),Intel)
-CXXFLAGS = -std=c++17 -O3 -march=native -Wall -Wextra -pthread -flto
-CFLAGS = -O3 -march=native -Wall -Wextra -flto
-$(info Building with Intel optimizations + LTO)
-else
-CXXFLAGS = -std=c++17 -O3 -march=native -Wall -Wextra -pthread -flto
-CFLAGS = -O3 -march=native -Wall -Wextra -flto
-$(info Building with generic optimizations + LTO)
-endif
+# FLAGS ESPECÍFICAS DO EMSCRIPTEN (Cruciais para o navegador)
+# 1. ALLOW_MEMORY_GROWTH=1: Permite expandir a RAM alocada para o Scratchpad do RandomX.
+# 2. EXPORTED_FUNCTIONS: Expõe os pontos de entrada do minerador para o seu index.html chamar.
+# 3. EXTRA_EXPORTED_RUNTIME_METHODS: Permite envelopar tipos usando cwrap/ccall.
+EMSCRIPTEN_FLAGS = -s WASM=1 \
+                   -s ALLOW_MEMORY_GROWTH=1 \
+                   -s TOTAL_MEMORY=134217728 \
+                   -s EXPORTED_FUNCTIONS="['_startMining', '_stopMining', '_cryptonight_hash', '_randomx_hash_run']" \
+                   -s EXTRA_EXPORTED_RUNTIME_METHODS="['ccall', 'cwrap']"
 
-LDFLAGS = -pthread -ldl -flto
+# Concatena as flags do Emscripten ao Linker
+LDFLAGS = -flto $(EMSCRIPTEN_FLAGS)
 
 # Directories
 SRC_DIR = MoneroMiner
 BUILD_DIR = build
 BIN_DIR = bin
 
-# Detect RandomX source directory robustly:
-# prefer 'RandomX' (capitalized) then 'randomx' to handle different checkouts/filesystems.
+# Detect RandomX source directory
 RANDOMX_DIR := $(shell if [ -d RandomX ]; then echo RandomX; elif [ -d randomx ]; then echo randomx; else echo ""; fi)
 ifeq ($(RANDOMX_DIR),)
 $(error RandomX source directory not found. Looked for 'RandomX' and 'randomx' in $(PWD))
 endif
 RANDOMX_BUILD = $(RANDOMX_DIR)/build
 
-# Absolute RandomX source path and cache file (used to detect mismatched caches)
+# Absolute RandomX source path and cache file
 RANDOMX_SRC_ABS := $(shell cd $(RANDOMX_DIR) && pwd)
 RANDOMX_CACHE := $(RANDOMX_BUILD)/CMakeCache.txt
 
 # Include paths
 INCLUDES = -I$(SRC_DIR) -I$(RANDOMX_DIR)/src
 
-# Source files (excluding Windows-specific, old/unused files)
+# Source files (Excluindo arquivos específicos do Windows)
 SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
 SOURCES := $(filter-out $(SRC_DIR)/framework.cpp $(SRC_DIR)/pch.cpp $(SRC_DIR)/main.cpp $(SRC_DIR)/MiningThread.cpp, $(SOURCES))
 
 # Object files
 OBJECTS = $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SOURCES))
 
-# Target executable
-TARGET = $(BIN_DIR)/monerominer
+# MUDANÇA DE DESTINO: Agora a saída gera a interface JavaScript (.js) e o binário WebAssembly (.wasm)
+TARGET = $(BIN_DIR)/miner.js
 
 # RandomX library
 RANDOMX_LIB = $(RANDOMX_BUILD)/librandomx.a
@@ -66,116 +63,56 @@ directories:
 	@mkdir -p $(BIN_DIR)
 	@mkdir -p $(RANDOMX_BUILD)
 
-# Build RandomX library
+# Build RandomX library usando emcmake
 randomx: directories
-	@echo "Building RandomX library..."
+	@echo "Building RandomX library for WebAssembly..."
 	@if [ ! -d "$(RANDOMX_DIR)" ]; then \
 		echo "Error: RandomX source directory '$(RANDOMX_DIR)' not found."; \
-		echo "Looked for 'randomx' and 'RandomX' in $(PWD)."; \
 		exit 1; \
 	fi
-	# If an existing CMakeCache points at a different source path, back it up to avoid path mismatch errors
 	@if [ -f "$(RANDOMX_CACHE)" ]; then \
 		old_src=$$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$(RANDOMX_CACHE)" | tr -d '\r'); \
 		if [ -n "$$old_src" ] && [ "$$old_src" != "$(RANDOMX_SRC_ABS)" ]; then \
-			echo "Detected mismatched CMake cache (was generated for $$old_src)"; \
-			backup="$(RANDOMX_BUILD).backup.$$(date +%s)"; \
-			echo "Moving $(RANDOMX_BUILD) to $$backup to avoid path mismatch."; \
-			mv "$(RANDOMX_BUILD)" "$$backup" || rm -rf "$(RANDOMX_BUILD)"; \
+			rm -rf "$(RANDOMX_BUILD)"; \
 			mkdir -p "$(RANDOMX_BUILD)"; \
 		fi; \
 	fi
+	# O segredo aqui é usar 'emcmake cmake' para interceptar os compiladores nativos
 	@cd "$(RANDOMX_DIR)" && mkdir -p build && cd build && \
-	cmake -DCMAKE_BUILD_TYPE=Release \
-	      -DBUILD_SHARED_LIBS=OFF \
-	      -DARCH=native \
-	      .. && \
+	emcmake cmake -DCMAKE_BUILD_TYPE=Release \
+	        -DBUILD_SHARED_LIBS=OFF \
+	        -DARCH=generic \
+	        .. && \
 	$(MAKE) -j$(nproc)
-	@echo "RandomX library built successfully"
+	@echo "RandomX static library compiled into WASM bytecode successfully"
 
-# Build MoneroMiner
+# Build MoneroMiner (.js + .wasm)
 $(TARGET): $(OBJECTS)
-	@echo "Linking $(TARGET)..."
-	# Link static RandomX directly (no rpath required)
+	@echo "Linking WebAssembly Target $(TARGET)..."
 	$(CXX) $(OBJECTS) $(RANDOMX_LIB) -o $(TARGET) $(LDFLAGS)
-	@echo "Build complete: $(TARGET)"
+	@echo "Build complete! Output files generated in: $(BIN_DIR)/miner.js e $(BIN_DIR)/miner.wasm"
 
 # Compile source files
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
-	@echo "Compiling $<..."
+	@echo "Compiling WebAssembly Object $<..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-
-# Install target (optional)
-install: all
-	@echo "Installing MoneroMiner..."
-	install -d /usr/local/bin
-	install -m 755 $(TARGET) /usr/local/bin/
-	install -d /usr/local/lib
-	install -m 755 $(RANDOMX_LIB) /usr/local/lib/
-	ldconfig
-	@echo "Installation complete"
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
 	rm -rf build/*.o
-	rm -f bin/MoneroMiner
+	rm -f bin/miner.js bin/miner.wasm
 
-# Deep clean - remove everything including RandomX
 distclean: clean
-	@echo "Deep cleaning (including RandomX)..."
+	@echo "Deep cleaning..."
 	rm -rf randomx/build
 	rm -rf RandomX/build
-	rm -f randomx_dataset_*.bin
 	rm -rf bin
 
-# Clean RandomX only
-clean-randomx:
-	@echo "Cleaning RandomX library..."
-	rm -rf randomx/build
-	rm -rf RandomX/build
-	@if [ -d "randomx/build" ]; then \
-		cd randomx/build && $(MAKE) clean 2>/dev/null || true; \
-	fi
-	@if [ -d "RandomX/build" ]; then \
-		cd RandomX/build && $(MAKE) clean 2>/dev/null || true; \
-	fi
-
-# Rebuild everything from scratch
 rebuild: distclean all
 
-# Run the miner
-run: all
-	@echo "Starting MoneroMiner..."
-	$(TARGET)
-
-# Debug build
-debug: CXXFLAGS += -g -DDEBUG -O0
-debug: CFLAGS += -g -DDEBUG -O0
-debug: clean all
-
-# Show build information
 info:
-	@echo "Compiler: $(CXX) $(shell $(CXX) --version | head -n1)"
+	@echo "Compiler: $(CXX)"
 	@echo "Flags: $(CXXFLAGS)"
-	@echo "RandomX: $(RANDOMX_LIB)"
-	@echo "Sources: $(words $(SOURCES)) files"
-	@echo "Build directory: $(BUILD_DIR)"
-	@echo "Output: $(TARGET)"
-
-# Help target
-help:
-	@echo "MoneroMiner Linux Build System"
-	@echo ""
-	@echo "Targets:"
-	@echo "  all        - Build everything (default)"
-	@echo "  randomx    - Build RandomX library only"
-	@echo "  clean      - Remove build artifacts"
-	@echo "  distclean  - Remove all build files including RandomX"
-	@echo "  install    - Install to system (/usr/local)"
-	@echo "  run        - Build and run the miner"
-	@echo "  debug      - Build with debug symbols"
-	@echo "  info       - Show build configuration"
-	@echo "  help       - Show this help message"
-
-.PHONY: all directories randomx clean distclean install run debug info help
+	@echo "Emscripten Flags: $(EMSCRIPTEN_FLAGS)"
+	@echo "Output Target: $(TARGET)"
