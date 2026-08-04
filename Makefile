@@ -41,9 +41,15 @@ RANDOMX_CACHE := $(RANDOMX_BUILD)/CMakeCache.txt
 # Include paths
 INCLUDES = -I$(SRC_DIR) -I$(RANDOMX_DIR)/src
 
-# Source files (Excluindo arquivos específicos do Windows)
+# Source files (Excluindo arquivos específicos do Windows e componentes nativos de Sockets TCP de rede)
 SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
-SOURCES := $(filter-out $(SRC_DIR)/framework.cpp $(SRC_DIR)/pch.cpp $(SRC_DIR)/main.cpp $(SRC_DIR)/MiningThread.cpp, $(SOURCES))
+SOURCES := $(filter-out $(SRC_DIR)/framework.cpp \
+                        $(SRC_DIR)/pch.cpp \
+                        $(SRC_DIR)/main.cpp \
+                        $(SRC_DIR)/MiningThread.cpp \
+                        $(SRC_DIR)/Platform.cpp \
+                        $(SRC_DIR)/Utils.cpp \
+                        $(SRC_DIR)/PoolClient.cpp, $(SOURCES))
 
 # Object files
 OBJECTS = $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SOURCES))
