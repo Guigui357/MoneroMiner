@@ -4,17 +4,16 @@
 CXX = em++
 CC = emcc
 
-# CORREÇÃO 1: Adicionado -pthread obrigatoriamente nas flags de objeto e desativado LTO local para evitar conflito de linkagem
-CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -pthread
-CFLAGS = -O3 -Wall -Wextra -pthread
+# Mantemos -pthread ativo e adicionamos macros de compatibilidade para o Emscripten isolar sockets de rede
+CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -pthread -DEMSCRIPTEN
+CFLAGS = -O3 -Wall -Wextra -pthread -DEMSCRIPTEN
 
-# CORREÇÃO 2: Removido o sublinhado "_" dos nomes das funções no array EXPORTED_FUNCTIONS do Emscripten
-# Além disso, passamos o parâmetro -pthread no Linker para bater com as flags dos objetos
+# CORREÇÃO: Atualizado EXTRA_EXPORTED_RUNTIME_METHODS para EXPORTED_RUNTIME_METHODS (evita o aviso de depreciação)
 EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -s ALLOW_MEMORY_GROWTH=1 \
                    -s TOTAL_MEMORY=134217728 \
                    -s EXPORTED_FUNCTIONS="['startMining', 'stopMining', 'cryptonight_hash', 'randomx_hash_run']" \
-                   -s EXTRA_EXPORTED_RUNTIME_METHODS="['ccall', 'cwrap']"
+                   -s EXPORTED_RUNTIME_METHODS="['ccall', 'cwrap']"
 
 LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
 
@@ -33,13 +32,12 @@ RANDOMX_CACHE := $(RANDOMX_BUILD)/CMakeCache.txt
 
 INCLUDES = -I$(SRC_DIR) -I$(RANDOMX_DIR)/src
 
+# CORREÇÃO: Trazemos Platform.cpp e Utils.cpp de volta para o pipeline. Deixamos apenas PoolClient e inicializadores nativos de fora.
 SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
 SOURCES := $(filter-out $(SRC_DIR)/framework.cpp \
                         $(SRC_DIR)/pch.cpp \
                         $(SRC_DIR)/main.cpp \
                         $(SRC_DIR)/MiningThread.cpp \
-                        $(SRC_DIR)/Platform.cpp \
-                        $(SRC_DIR)/Utils.cpp \
                         $(SRC_DIR)/PoolClient.cpp, $(SOURCES))
 
 OBJECTS = $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SOURCES))
@@ -60,7 +58,6 @@ directories:
 	@mkdir -p $(BIN_DIR)
 	@mkdir -p $(RANDOMX_BUILD)
 
-# CORREÇÃO 3: Adicionamos a flag de PTHREADS ativa também no CMake do RandomX para gerar a biblioteca estática compatível com o minerador principal
 randomx:
 	@echo "Building RandomX library for WebAssembly..."
 	@if [ -f "$(RANDOMX_CACHE)" ]; then \
@@ -74,7 +71,6 @@ randomx:
 	emcmake cmake -DCMAKE_BUILD_TYPE=Release \
 	        -DBUILD_SHARED_LIBS=OFF \
 	        -DARCH=generic \
-	        -DTHRDS=ON \
 	        .. && \
 	$(MAKE) randomx -j$(nproc)
 
