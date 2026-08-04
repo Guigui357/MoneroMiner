@@ -14,6 +14,7 @@ EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -s ALLOW_MEMORY_GROWTH=1 \
                    -s INITIAL_MEMORY=536870912 \
                    -s PROXY_TO_PTHREAD=1 \
+                   -lwebsocket.js \
                    -s EXPORTED_FUNCTIONS="['_startMining', '_stopMining', '_cryptonight_hash', '_randomx_hash_run']" \
                    -s EXPORTED_RUNTIME_METHODS="['ccall', 'cwrap']"
 
