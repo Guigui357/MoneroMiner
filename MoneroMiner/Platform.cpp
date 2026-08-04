@@ -548,3 +548,20 @@ namespace Platform {
 #endif
 
 } // namespace Platform
+
+#ifdef EMSCRIPTEN
+#include <sys/sysinfo.h>
+
+// Sobrescreve a chamada de sistema do Linux simulando 4GB de RAM estáveis para o ecossistema Web
+extern "C" {
+    int sysinfo(struct sysinfo *info) {
+        if (!info) return -1;
+        std::memset(info, 0, sizeof(struct sysinfo));
+        info->totalram = 4096ULL * 1024ULL * 1024ULL; // Simula 4GB Total
+        info->freeram  = 2048ULL * 1024ULL * 1024ULL; // Simula 2GB Livre
+        info->mem_unit = 1;
+        return 0;
+    }
+}
+#endif
+
