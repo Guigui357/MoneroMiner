@@ -733,88 +733,96 @@ bool loadConfig() {
     }
 }
 
-bool startMining() {
-    // Initialize network first
-    if (!PoolClient::initialize()) {
-        return false;
-    }
-    
-    if (!PoolClient::connect()) {
-        return false;
-    }
-    
-    if (!PoolClient::login(config.walletAddress, config.password, 
-                          config.workerName, config.userAgent)) {
-        return false;
-    }
-    
-    // Start job listener thread IMMEDIATELY after login (uses same socket)
-    jobListenerThread = std::thread(PoolClient::jobListener);
-    
-    // Wait for first job
-    {
-        std::unique_lock<std::mutex> lock(PoolClient::jobMutex);
-        PoolClient::jobAvailable.wait_for(lock, std::chrono::seconds(10), 
-            [] { return !PoolClient::jobQueue.empty() || shouldStop; });
-    }
+extern "C" {
 
-    if (shouldStop) {
-        return false;
-    }
-    
-    // Initialize RandomX before creating threads
-    Job* currentJob = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(PoolClient::jobMutex);
-        if (!PoolClient::jobQueue.empty()) {
-            currentJob = &PoolClient::jobQueue.front();
-        }
-    }
-
-    if (!currentJob) {
-        Utils::threadSafePrint("No job available for RandomX initialization", true);
-        return false;
-    }
-
-    if (!RandomXManager::initialize(currentJob->seedHash)) {
-        Utils::threadSafePrint("Failed to initialize RandomX", true);
-        return false;
-    }
-
-    // Initialize thread data
-    threadData.resize(static_cast<size_t>(config.numThreads));
-    for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {  // Fix: use size_t
-        threadData[i] = new MiningThreadData(static_cast<int>(i));
-        if (!threadData[i]->initializeVM()) {
-            Utils::threadSafePrint("Failed to initialize VM for thread " + std::to_string(i), true);
+    bool startMining() {
+        // Inicializa a rede primeiro (Stubs retornam true na Web)
+        if (!PoolClient::initialize()) {
             return false;
         }
-        if (config.debugMode && i < 4) {
-            Utils::threadSafePrint("VM ready for thread " + std::to_string(i), true);
+        
+        // Abre o WebSocket assíncrono com o seu proxy no Render
+        if (!PoolClient::connect()) {
+            Utils::threadSafePrint("Falha ao conectar via WebSocket.", true);
+            return false;
         }
-    }
-    if (!config.debugMode) {
-        Utils::threadSafePrint("Initialized " + std::to_string(config.numThreads) + " mining threads", true);
-    }
-    
-    // Start mining threads
-    for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {  // Fix: use size_t
-        miningThreads.emplace_back(miningThread, threadData[i]);
-        if (config.debugMode) {
-            Utils::threadSafePrint("Started mining thread " + std::to_string(i), true);
+        
+        // Envia os dados de autenticação (Handshake no seu server.js)
+        if (!PoolClient::login(config.walletAddress, config.password, 
+                              config.workerName, config.userAgent)) {
+            Utils::threadSafePrint("Falha ao enviar login para o proxy.", true);
+            return false;
         }
-    }
-    
-    if (!config.debugMode) {
-        Utils::threadSafePrint("Mining started - Press Ctrl+C to stop", true);
-    } else {
-        Utils::threadSafePrint("=== MINING STARTED WITH " + std::to_string(config.numThreads) + " THREADS ===", true);
-        Utils::threadSafePrint("Press Ctrl+C to stop mining", true);
-    }
-    
-    return true;
-}
+        
+        // CORREÇÃO WEB: Removemos a thread nativa 'jobListener', 
+        // pois o callback 'on_message_received' do WebSocket já escuta os jobs de fundo de forma assíncrona.
 
+        // Aguarda o primeiro Job enviado pelo seu server.js por até 10 segundos
+        Utils::threadSafePrint("Aguardando primeiro Job enviado pela Pool...", true);
+        {
+            std::unique_lock<std::mutex> lock(PoolClient::jobMutex);
+            PoolClient::jobAvailable.wait_for(lock, std::chrono::seconds(10), 
+                [] { return !PoolClient::jobQueue.empty() || shouldStop; });
+        }
+
+        if (shouldStop) {
+            return false;
+        }
+        
+        // Captura o Job inicial da fila para configurar a Máquina Virtual do RandomX
+        Job* currentJob = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(PoolClient::jobMutex);
+            if (!PoolClient::jobQueue.empty()) {
+                currentJob = &PoolClient::jobQueue.front();
+            }
+        }
+
+        if (!currentJob) {
+            Utils::threadSafePrint("Nenhum Job disponível para iniciar o RandomX", true);
+            return false;
+        }
+
+        // Inicializa a estrutura leve do RandomX na Web (Modo Light)
+        if (!RandomXManager::initialize(currentJob->seedHash)) {
+            Utils::threadSafePrint("Falha ao inicializar gerência do RandomX", true);
+            return false;
+        }
+
+        // Inicializa as instâncias de memória de trabalho (VM) das Threads
+        threadData.resize(static_cast<size_t>(config.numThreads));
+        for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
+            threadData[i] = new MiningThreadData(static_cast<int>(i));
+            if (!threadData[i]->initializeVM()) {
+                Utils::threadSafePrint("Falha ao iniciar VM na thread de mineração " + std::to_string(i), true);
+                return false;
+            }
+            if (config.debugMode && i < 4) {
+                Utils::threadSafePrint("VM operável na thread " + std::to_string(i), true);
+            }
+        }
+        
+        if (!config.debugMode) {
+            Utils::threadSafePrint("Inicializado: " + std::to_string(config.numThreads) + " threads de trabalho.", true);
+        }
+        
+        // Dispara as Web Worker Threads do C++ mapeadas pelo compilador
+        for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
+            miningThreads.emplace_back(miningThread, threadData[i]);
+            if (config.debugMode) {
+                Utils::threadSafePrint("Trabalhador ativado na thread de IDs: " + std::to_string(i), true);
+            }
+        }
+        
+        if (!config.debugMode) {
+            Utils::threadSafePrint("Mineração Inicializada com Sucesso em Segundo Plano!", true);
+        } else {
+            Utils::threadSafePrint("=== MINING STARTED WITH " + std::to_string(config.numThreads) + " THREADS ===", true);
+        }
+        
+        return true;
+    }
+}
 int main(int argc, char* argv[]) {
     // Ensure sockets are initialized as early as possible (critical on Windows)
     if (!Platform::initializeSockets()) {
