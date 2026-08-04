@@ -8,15 +8,13 @@ CC = emcc
 CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 CFLAGS = -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 
-# CORREÇÃO: Aumentado TOTAL_MEMORY para 512MB (mínimo seguro para o RandomX Light + alocações dinâmicas)
-# CORREÇÃO: Adicionado PROXY_TO_PTHREAD=1 para não travar a aba/UI do navegador
 EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -s ALLOW_MEMORY_GROWTH=1 \
                    -s INITIAL_MEMORY=536870912 \
                    -s PROXY_TO_PTHREAD=1 \
                    -lwebsocket.js \
                    -s EXPORTED_FUNCTIONS="['_startMining']" \
-                   -s EXPORT_RUNTIME_METHODS=cwrap,ccall \
+                   -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap']" \
                    -Wno-pthreads-mem-growth
 
 LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
