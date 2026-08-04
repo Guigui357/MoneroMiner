@@ -15,7 +15,9 @@ EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -lwebsocket.js \
                    -s EXPORTED_FUNCTIONS="['_startMining']" \
                    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap']" \
+                   -s INCOMING_MODULE_JS_API="['cwrap','ccall','print','printErr','onRuntimeInitialized']" \
                    -Wno-pthreads-mem-growth
+
 
 LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
 
