@@ -30,9 +30,10 @@ RANDOMX_BUILD = $(RANDOMX_DIR)/build
 RANDOMX_SRC_ABS := $(shell cd $(RANDOMX_DIR) && pwd)
 RANDOMX_CACHE := $(RANDOMX_BUILD)/CMakeCache.txt
 
+# Include paths
 INCLUDES = -I$(SRC_DIR) -I$(RANDOMX_DIR)/src
 
-# CORREÇÃO: Trazemos Platform.cpp e Utils.cpp de volta para o pipeline. Deixamos apenas PoolClient e inicializadores nativos de fora.
+# Source files (Exclui o PoolClient nativo com dependências de sockets Linux e adiciona a lógica de stubs da Web)
 SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
 SOURCES := $(filter-out $(SRC_DIR)/framework.cpp \
                         $(SRC_DIR)/pch.cpp \
