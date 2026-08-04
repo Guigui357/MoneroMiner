@@ -63,7 +63,7 @@ directories:
 	@mkdir -p $(BIN_DIR)
 	@mkdir -p $(RANDOMX_BUILD)
 
-# Build RandomX library usando emcmake
+# Build RandomX library usando emcmake (COM CORREÇÃO PARA DESATIVAR TESTES/BENCHMARKS)
 randomx: directories
 	@echo "Building RandomX library for WebAssembly..."
 	@if [ ! -d "$(RANDOMX_DIR)" ]; then \
@@ -77,10 +77,12 @@ randomx: directories
 			mkdir -p "$(RANDOMX_BUILD)"; \
 		fi; \
 	fi
-	# O segredo aqui é usar 'emcmake cmake' para interceptar os compiladores nativos
+	# CORREÇÃO: Adicionado -DBUILD_BENCHMARK=OFF e -DBUILD_TESTS=OFF para evitar o erro de pthread_setaffinity_np
 	@cd "$(RANDOMX_DIR)" && mkdir -p build && cd build && \
 	emcmake cmake -DCMAKE_BUILD_TYPE=Release \
 	        -DBUILD_SHARED_LIBS=OFF \
+	        -DBUILD_BENCHMARK=OFF \
+	        -DBUILD_TESTS=OFF \
 	        -DARCH=generic \
 	        .. && \
 	$(MAKE) -j$(nproc)
