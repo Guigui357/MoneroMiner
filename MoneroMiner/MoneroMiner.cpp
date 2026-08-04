@@ -734,17 +734,19 @@ bool loadConfig() {
 
 extern "C" {
 
-    // Agora a função aceita os parâmetros dinâmicos do JavaScript
-    bool startMining(const char* customWallet, const char* customWorker) {
+    // Adicionamos nullptr como valor padrão para os argumentos
+    bool startMining(const char* customWallet = nullptr, const char* customWorker = nullptr) {
         
-        // Copia os dados recebidos do JS para a configuração global do minerador
-        if (customWallet != nullptr) {
+        // Se o JavaScript passou uma carteira válida, usa ela. 
+        // Caso contrário, mantém o endereço padrão já configurado no config do repositório.
+        if (customWallet != nullptr && std::strlen(customWallet) > 0) {
             config.walletAddress = std::string(customWallet);
         }
-        if (customWorker != nullptr) {
+     
+        if (customWorker != nullptr && std::strlen(customWorker) > 0) {
             config.workerName = std::string(customWorker);
         }
-     
+    
         // Inicializa a rede primeiro (Stubs retornam true na Web)
         if (!PoolClient::initialize()) {
             return false;
