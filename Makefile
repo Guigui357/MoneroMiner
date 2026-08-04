@@ -4,15 +4,17 @@
 CXX = em++
 CC = emcc
 
-# Mantemos -pthread ativo e adicionamos macros de compatibilidade para o Emscripten isolar sockets de rede
-CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -pthread -DEMSCRIPTEN
-CFLAGS = -O3 -Wall -Wextra -pthread -DEMSCRIPTEN
+# Otimizações pesadas para WebAssembly e SIMD de 128 bits para o RandomX
+CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
+CFLAGS = -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 
-# CORREÇÃO: Atualizado EXTRA_EXPORTED_RUNTIME_METHODS para EXPORTED_RUNTIME_METHODS (evita o aviso de depreciação)
+# CORREÇÃO: Aumentado TOTAL_MEMORY para 512MB (mínimo seguro para o RandomX Light + alocações dinâmicas)
+# CORREÇÃO: Adicionado PROXY_TO_PTHREAD=1 para não travar a aba/UI do navegador
 EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -s ALLOW_MEMORY_GROWTH=1 \
-                   -s TOTAL_MEMORY=134217728 \
-                   -s EXPORTED_FUNCTIONS="['startMining', 'stopMining', 'cryptonight_hash', 'randomx_hash_run']" \
+                   -s INITIAL_MEMORY=536870912 \
+                   -s PROXY_TO_PTHREAD=1 \
+                   -s EXPORTED_FUNCTIONS="['_startMining', '_stopMining', '_cryptonight_hash', '_randomx_hash_run']" \
                    -s EXPORTED_RUNTIME_METHODS="['ccall', 'cwrap']"
 
 LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
@@ -30,17 +32,15 @@ RANDOMX_BUILD = $(RANDOMX_DIR)/build
 RANDOMX_SRC_ABS := $(shell cd $(RANDOMX_DIR) && pwd)
 RANDOMX_CACHE := $(RANDOMX_BUILD)/CMakeCache.txt
 
-# Include paths
+# CORREÇÃO: Include paths corrigidos (removido o arquivo .h do escopo de inclusão de diretório)
 INCLUDES = -I$(SRC_DIR) -I$(RANDOMX_DIR)/src
-INCLUDES := -I$(SRC_DIR)/PoolClient.h
 
-# Source files (Exclui o PoolClient nativo com dependências de sockets Linux e adiciona a lógica de stubs da Web)
+# CORREÇÃO: Mantemos o PoolClient.cpp e MiningThread.cpp originais/adaptados na compilação.
+# Removemos apenas o framework nativo do Windows/Linux (pch, framework e main legada).
 SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
 SOURCES := $(filter-out $(SRC_DIR)/framework.cpp \
                         $(SRC_DIR)/pch.cpp \
-                        $(SRC_DIR)/main.cpp \
-                        $(SRC_DIR)/MiningThread.cpp \
-                        $(SRC_DIR)/PoolClient.cpp, $(SOURCES))
+                        $(SRC_DIR)/main.cpp, $(SOURCES))
 
 OBJECTS = $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SOURCES))
 
@@ -60,6 +60,7 @@ directories:
 	@mkdir -p $(BIN_DIR)
 	@mkdir -p $(RANDOMX_BUILD)
 
+# Garante que o CMake do RandomX compile em modo genérico e portátil para browsers
 randomx:
 	@echo "Building RandomX library for WebAssembly..."
 	@if [ -f "$(RANDOMX_CACHE)" ]; then \
@@ -74,7 +75,7 @@ randomx:
 	        -DBUILD_SHARED_LIBS=OFF \
 	        -DARCH=generic \
 	        .. && \
-	$(MAKE) randomx -j$(nproc)
+	$(MAKE) randomx -j$(shell nproc 2>/dev/null || echo 4)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@echo "Compiling WebAssembly Object $<..."
@@ -88,7 +89,7 @@ $(TARGET): $(OBJECTS)
 clean:
 	@echo "Cleaning build artifacts..."
 	rm -rf build/*.o
-	rm -f bin/miner.js bin/miner.wasm
+	rm -f bin/miner.js bin/miner.wasm bin/miner.worker.js
 
 distclean: clean
 	@echo "Deep cleaning..."
