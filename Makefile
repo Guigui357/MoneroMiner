@@ -45,31 +45,22 @@ TARGET = $(BIN_DIR)/miner.js
 RANDOMX_LIB = $(RANDOMX_BUILD)/librandomx.a
 
 # =========================================================================
-# REGRAS DE COMPILAÇÃO E DEPENDÊNCIA (CORRIGIDAS)
+# REGRAS DE COMPILAÇÃO E DEPENDÊNCIA SEQUENCIAL
 # =========================================================================
 
-# Alvo principal
-all: directories randomx $(TARGET)
+# Alvo principal garante a ordem: Pastas -> RandomX -> Objetos locais -> Linkagem
+all: directories
+	$(MAKE) randomx
+	$(MAKE) $(TARGET)
 
-# Cria as pastas iniciais
+# Cria as pastas estruturais iniciais
 directories:
 	@mkdir -p $(BUILD_DIR)
 	@mkdir -p $(BIN_DIR)
 	@mkdir -p $(RANDOMX_BUILD)
 
-# Compila os arquivos objetos locais (.o) OBRIGATORIAMENTE após a biblioteca randomx existir
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp $(RANDOMX_LIB)
-	@echo "Compiling WebAssembly Object $<..."
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-
-# Gera o arquivo binário final miner.js e miner.wasm
-$(TARGET): $(OBJECTS) $(RANDOMX_LIB)
-	@echo "Linking WebAssembly Target $(TARGET)..."
-	$(CXX) $(OBJECTS) $(RANDOMX_LIB) -o $(TARGET) $(LDFLAGS)
-	@echo "Build complete! Output generated in: $(BIN_DIR)/"
-
-# Compilação limpa do RandomX isolando testes e benchmarks diretamente nas flags do sub-make
-randomx: directories
+# Compilação limpa e isolada do RandomX (Fase 1)
+randomx:
 	@echo "Building RandomX library for WebAssembly..."
 	@if [ -f "$(RANDOMX_CACHE)" ]; then \
 		old_src=$$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$(RANDOMX_CACHE)" | tr -d '\r'); \
@@ -84,3 +75,34 @@ randomx: directories
 	        -DARCH=generic \
 	        .. && \
 	$(MAKE) randomx -j$(nproc)
+
+# Compila os arquivos objetos locais (.o) (Fase 2)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
+	@echo "Compiling WebAssembly Object $<..."
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Faz a linkagem final do binário miner.js e miner.wasm
+$(TARGET): $(OBJECTS)
+	@echo "Linking WebAssembly Target $(TARGET)..."
+	$(CXX) $(OBJECTS) $(RANDOMX_LIB) -o $(TARGET) $(LDFLAGS)
+	@echo "Build complete! Output generated successfully in: $(BIN_DIR)/"
+
+# Clean build artifacts
+clean:
+	@echo "Cleaning build artifacts..."
+	rm -rf build/*.o
+	rm -f bin/miner.js bin/miner.wasm
+
+distclean: clean
+	@echo "Deep cleaning..."
+	rm -rf randomx/build
+	rm -rf RandomX/build
+	rm -rf bin
+
+rebuild: distclean all
+
+info:
+	@echo "Compiler: $(CXX)"
+	@echo "Output Target: $(TARGET)"
+
+.PHONY: all directories randomx clean distclean rebuild info
