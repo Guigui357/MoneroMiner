@@ -49,6 +49,5 @@ jobs:
       with:
         name: monerominer-wasm-dist
         path: |
-          bin/miner.js
-          bin/miner.wasm
+          bin/*
         retention-days: 7
