@@ -13,12 +13,10 @@ EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -s INITIAL_MEMORY=536870912 \
                    -s PROXY_TO_PTHREAD=1 \
                    -lwebsocket.js \
+                   -s SHARED_MEMORY=1 \
                    -s ENVIRONMENT="web,worker" \
-                   -s EXPORT_NAME="MinerModule" \
-                   -s PTHREAD_POOL_SIZE=2 \
                    -s EXPORTED_FUNCTIONS="['_startMining']" \
-                   -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap']" \
-                   -s INCOMING_MODULE_JS_API="['cwrap','ccall','print','printErr','onRuntimeInitialized']" \
+                   -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','wasmMemory']" \
                    -Wno-pthreads-mem-growth
 
 LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
