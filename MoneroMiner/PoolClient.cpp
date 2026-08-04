@@ -99,7 +99,7 @@ namespace PoolClient {
 
         // Configuração apontando para a sua instância ativa no Render
         EmscriptenWebSocketCreateAttributes ws_attrs = {
-            "wss://://onrender.com", // Adicione aqui a URL do seu deploy do Render
+            "wss://proxy-xmr.onrender.com", // Adicione aqui a URL do seu deploy do Render
             NULL,
             EM_TRUE
         };
