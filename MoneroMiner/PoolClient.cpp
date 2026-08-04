@@ -130,7 +130,7 @@ namespace PoolClient {
         std::string payload = picojson::value(loginReq).serialize();
         
         std::lock_guard<std::mutex> lock(socketMutex);
-        EMSCRIPTEN_RESULT res = emscripten_websocket_send_text(wsHandle, payload.c_str());
+        EMSCRIPTEN_RESULT res = emscripten_websocket_send_utf8_text(wsHandle, payload.c_str());
         
         if (res == EMSCRIPTEN_RESULT_SUCCESS) {
             Utils::threadSafePrint(" Handshake de Login enviado para o Proxy.", true);
@@ -157,7 +157,7 @@ namespace PoolClient {
         responseReady = false;
 
         // Envia os dados pelo WebSocket
-        emscripten_websocket_send_text(wsHandle, payload.c_str());
+        emscripten_websocket_send_utf8_text(wsHandle, payload.c_str());
         Utils::threadSafePrint(" Enviando Share encontrado para validação...", true);
 
         // Aguarda até 4 segundos o server.js responder "hash" ou "error"
