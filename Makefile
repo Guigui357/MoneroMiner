@@ -32,6 +32,7 @@ RANDOMX_CACHE := $(RANDOMX_BUILD)/CMakeCache.txt
 
 # Include paths
 INCLUDES = -I$(SRC_DIR) -I$(RANDOMX_DIR)/src
+INCLUDES := $(filter-out $(SRC_DIR)/PoolClient.h
 
 # Source files (Exclui o PoolClient nativo com dependências de sockets Linux e adiciona a lógica de stubs da Web)
 SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
