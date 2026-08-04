@@ -16,7 +16,8 @@ EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -s PROXY_TO_PTHREAD=1 \
                    -lwebsocket.js \
                    -s EXPORTED_FUNCTIONS="['_startMining']" \
-                   -s EXPORTED_RUNTIME_METHODS="['ccall', 'cwrap']"
+                   -s EXPORT_RUNTIME_METHODS=cwrap,ccall \
+                   -Wno-pthreads-mem-growth
 
 LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
 
