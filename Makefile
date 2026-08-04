@@ -13,6 +13,8 @@ EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -s INITIAL_MEMORY=536870912 \
                    -s PROXY_TO_PTHREAD=1 \
                    -lwebsocket.js \
+                   -s ENVIRONMENT="web,worker" \
+                   -s EXPORT_NAME="MinerModule" \
                    -s EXPORTED_FUNCTIONS="['_startMining']" \
                    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap']" \
                    -s INCOMING_MODULE_JS_API="['cwrap','ccall','print','printErr','onRuntimeInitialized']" \
