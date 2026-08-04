@@ -4,16 +4,19 @@
 CXX = em++
 CC = emcc
 
-CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -flto
-CFLAGS = -O3 -Wall -Wextra -flto
+# CORREÇÃO 1: Adicionado -pthread obrigatoriamente nas flags de objeto e desativado LTO local para evitar conflito de linkagem
+CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -pthread
+CFLAGS = -O3 -Wall -Wextra -pthread
 
+# CORREÇÃO 2: Removido o sublinhado "_" dos nomes das funções no array EXPORTED_FUNCTIONS do Emscripten
+# Além disso, passamos o parâmetro -pthread no Linker para bater com as flags dos objetos
 EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -s ALLOW_MEMORY_GROWTH=1 \
                    -s TOTAL_MEMORY=134217728 \
-                   -s EXPORTED_FUNCTIONS="['_startMining', '_stopMining', '_cryptonight_hash', '_randomx_hash_run']" \
+                   -s EXPORTED_FUNCTIONS="['startMining', 'stopMining', 'cryptonight_hash', 'randomx_hash_run']" \
                    -s EXTRA_EXPORTED_RUNTIME_METHODS="['ccall', 'cwrap']"
 
-LDFLAGS = -pthread -flto $(EMSCRIPTEN_FLAGS)
+LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
 
 # Directories
 SRC_DIR = MoneroMiner
@@ -48,18 +51,16 @@ RANDOMX_LIB = $(RANDOMX_BUILD)/librandomx.a
 # REGRAS DE COMPILAÇÃO E DEPENDÊNCIA SEQUENCIAL
 # =========================================================================
 
-# Alvo principal garante a ordem: Pastas -> RandomX -> Objetos locais -> Linkagem
 all: directories
 	$(MAKE) randomx
 	$(MAKE) $(TARGET)
 
-# Cria as pastas estruturais iniciais
 directories:
 	@mkdir -p $(BUILD_DIR)
 	@mkdir -p $(BIN_DIR)
 	@mkdir -p $(RANDOMX_BUILD)
 
-# Compilação limpa e isolada do RandomX (Fase 1)
+# CORREÇÃO 3: Adicionamos a flag de PTHREADS ativa também no CMake do RandomX para gerar a biblioteca estática compatível com o minerador principal
 randomx:
 	@echo "Building RandomX library for WebAssembly..."
 	@if [ -f "$(RANDOMX_CACHE)" ]; then \
@@ -73,21 +74,19 @@ randomx:
 	emcmake cmake -DCMAKE_BUILD_TYPE=Release \
 	        -DBUILD_SHARED_LIBS=OFF \
 	        -DARCH=generic \
+	        -DTHRDS=ON \
 	        .. && \
 	$(MAKE) randomx -j$(nproc)
 
-# Compila os arquivos objetos locais (.o) (Fase 2)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@echo "Compiling WebAssembly Object $<..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-# Faz a linkagem final do binário miner.js e miner.wasm
 $(TARGET): $(OBJECTS)
 	@echo "Linking WebAssembly Target $(TARGET)..."
 	$(CXX) $(OBJECTS) $(RANDOMX_LIB) -o $(TARGET) $(LDFLAGS)
 	@echo "Build complete! Output generated successfully in: $(BIN_DIR)/"
 
-# Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
 	rm -rf build/*.o
