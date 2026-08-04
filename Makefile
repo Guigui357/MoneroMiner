@@ -15,13 +15,11 @@ EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -lwebsocket.js \
                    -s ENVIRONMENT="web,worker" \
                    -s EXPORT_NAME="MinerModule" \
-                   -s SINGLE_FILE=1 \
                    -s PTHREAD_POOL_SIZE=2 \
                    -s EXPORTED_FUNCTIONS="['_startMining']" \
                    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap']" \
                    -s INCOMING_MODULE_JS_API="['cwrap','ccall','print','printErr','onRuntimeInitialized']" \
                    -Wno-pthreads-mem-growth
-
 
 LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
 
