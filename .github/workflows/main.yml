@@ -1,0 +1,55 @@
+name: Compile MoneroMiner to WebAssembly
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Baixa o código-fonte do seu repositório (incluindo submódulos se houver)
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    # 2. Instala as dependências de compilação do Linux (CMake e Make)
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential
+
+    # 3. Configura o Emscripten SDK oficial na máquina do GitHub Actions
+    - name: Setup Emscripten toolchain
+      uses: mymindstorm/setup-emsdk@v14
+      with:
+        # Define a versão estável do compilador emcc
+        version: 3.1.64
+        # Ativa as variáveis de ambiente automaticamente para os passos seguintes
+        actions-cache-folder: 'emsdk-cache'
+
+    # 4. Executa a checagem das versões para garantir que o emcc está ativo
+    - name: Verify Emscripten Installation
+      run: |
+        emcc -v
+        em++ -v
+
+    # 5. Roda o comando Make usando o seu Makefile reestruturado para WebAssembly
+    - name: Compile Project via Makefile
+      run: |
+        make clean
+        make -j$(nproc)
+
+    # 6. Salva os arquivos miner.js e miner.wasm gerados para você baixar no painel do GitHub
+    - name: Upload WebAssembly Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: monerominer-wasm-dist
+        path: |
+          bin/miner.js
+          bin/miner.wasm
+        retention-days: 7
