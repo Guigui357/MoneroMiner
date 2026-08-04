@@ -56,7 +56,6 @@ void signalHandler(int signum);
 void printConfig();
 void miningThread(MiningThreadData* data);
 bool loadConfig();
-bool startMining();
 
 // New function: Get detailed CPU information
 std::string getCPUBrandString() {
