@@ -15,7 +15,7 @@ EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -lwebsocket.js \
                    -s SHARED_MEMORY=1 \
                    -s ENVIRONMENT="web,worker" \
-                   -s EXPORTED_FUNCTIONS="['_startMining']" \
+                   -s EXPORTED_FUNCTIONS="['_startMining', '_stopMining']" \
                    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','wasmMemory']" \
                    -Wno-pthreads-mem-growth
 
