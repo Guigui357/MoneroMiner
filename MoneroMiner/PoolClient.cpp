@@ -19,7 +19,6 @@ using namespace picojson;
 
 // =========================================================================
 // DECLARAÇÃO DE SÍMBOLOS EXTERNOS (Escopo Global fora do namespace)
-// Mapeia as variáveis nativas e rotas criadas no MoneroMiner.cpp
 // =========================================================================
 extern std::vector<std::thread> miningThreads;
 extern void miningThread(std::shared_ptr<MiningThreadData> data);
@@ -28,7 +27,7 @@ extern std::atomic<bool> statsThreadRunning;
 extern void webStatsMonitorLoop();
 
 namespace PoolClient {
-    // Definições de membros estáticos (Flags lógicas para controle interno)
+    // Definições de membros estáticos
     socket_t poolSocket = INVALID_SOCKET_VALUE; 
     EMSCRIPTEN_WEBSOCKET_T wsHandle = 0;        
 
@@ -45,7 +44,7 @@ namespace PoolClient {
     std::mutex submitMutex;
     std::string poolId;
 
-    // Elementos de sincronização para emular comportamento síncrono no WebSocket assíncrono
+    // Elementos de sincronização assíncrona
     static std::string lastResponseStr;
     static std::mutex responseMutex;
     static std::condition_variable responseAvailable;
@@ -57,7 +56,7 @@ namespace PoolClient {
     bool processShareResponse(const std::string& response);
 
     // =========================================================================
-    // CALLBACKS DO WEBSOCKET (Executados na Thread do Navegador)
+    // CALLBACKS DO WEBSOCKET
     // =========================================================================
 
     EM_BOOL on_message_received(int eventType, const EmscriptenWebSocketMessageEvent *websocketEvent, void *userData) {
@@ -71,21 +70,23 @@ namespace PoolClient {
                 std::string err = picojson::parse(v, msg);
                 if (!err.empty()) return EM_TRUE;
 
-                const picojson::object& obj = v.get<picojson::object>();
+                if (v.is<picojson::object>()) {
+                    const picojson::object& obj = v.get<picojson::object>();
 
-                // CAPTURA DE JOB (Sincronizado com o seu 'server.js' do Render)
-                if (obj.find("identifier") != obj.end() && obj.at("identifier").get<std::string>() == "job") {
-                    processNewJobFromObj(obj);
-                } 
-                // CAPTURA DE RESPOSTAS DE SHARE OU HANDSHAKE
-                else {
-                    std::lock_guard<std::mutex> lock(responseMutex);
-                    lastResponseStr = msg;
-                    responseReady = true;
-                    responseAvailable.notify_one(); 
+                    // CAPTURA DE JOB
+                    if (obj.find("identifier") != obj.end() && obj.at("identifier").get<std::string>() == "job") {
+                        processNewJobFromObj(obj);
+                    } 
+                    // CAPTURA DE RESPOSTAS DE SHARE OU HANDSHAKE
+                    else {
+                        std::lock_guard<std::mutex> lock(responseMutex);
+                        lastResponseStr = msg;
+                        responseReady = true;
+                        responseAvailable.notify_one(); 
+                    }
                 }
             } catch (...) {
-                // Tratamento seguro contra falhas
+                // Prevenção de exceções
             }
         }
         return EM_TRUE;
@@ -105,7 +106,6 @@ namespace PoolClient {
         PoolClient::poolSocket = 1; 
         Utils::threadSafePrint("[WASM] -> SUCESSO: WebSocket conectado e pronto para tráfego!", true);
         
-        // Dispara o login de forma automatizada assim que o aperto de mão for concluído
         PoolClient::login(config.walletAddress, config.password, config.workerName, config.userAgent);
         return EM_TRUE;
     }
@@ -124,7 +124,6 @@ namespace PoolClient {
             return false;
         }
 
-        // URL estável gravada em ponteiro estático
         static const char* proxy_url = "wss://://onrender.com"; 
 
         Utils::threadSafePrint("[WASM] Tentando abrir WebSocket assíncrono para: " + std::string(proxy_url), true);
@@ -142,7 +141,6 @@ namespace PoolClient {
             return false;
         }
 
-        // Vinculação de eventos incluindo o fluxo onopen assíncrono
         emscripten_websocket_set_onopen_callback(wsHandle, NULL, on_ws_open);
         emscripten_websocket_set_onmessage_callback(wsHandle, NULL, on_message_received);
         emscripten_websocket_set_onclose_callback(wsHandle, NULL, on_close_event);
@@ -196,7 +194,7 @@ namespace PoolClient {
     }
 
     // =========================================================================
-    // PROCESSAMENTO DE TRABALHOS (JOBS) E PARTICIPAÇÕES (SHARES)
+    // PROCESSAMENTO DE JOBS E SHARES
     // =========================================================================
 
     void processNewJobFromObj(const picojson::object& obj) {
@@ -218,7 +216,6 @@ namespace PoolClient {
                 
                 Utils::threadSafePrint("[WASM] -> SUCESSO: Novo Job recebido do Proxy! ID: " + jobId, true);
 
-                // GATILHO: Dispara os Web Workers reais usando o operador de escopo global '::'
                 if (::miningThreads.empty() && !shouldStop) {
                     Utils::threadSafePrint("[WASM] Inicializando a maquina virtual RandomX (Modo Light)...", true);
                     
@@ -237,7 +234,6 @@ namespace PoolClient {
                     }
 
                     for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-                    for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
                         ::miningThreads.emplace_back(::miningThread, threadData[i]);
                     }
                 }
@@ -249,6 +245,7 @@ namespace PoolClient {
                 Utils::threadSafePrint("[WASM] === WORKERS DISPARADOS COM SUCESSO! MINERACAO ATIVA ===", true);
             }
         } 
+        catch (const std::exception& e) {
         catch (const std::exception& e) {
             Utils::threadSafePrint("[WASM] Erro ao analisar propriedades do Job: " + std::string(e.what()), true);
         }
@@ -298,7 +295,7 @@ namespace PoolClient {
     }
 
     // =========================================================================
-    // STUBS DE COMPATIBILIDADE (Evitam erros de 'Undefined Symbol' no Linker)
+    // STUBS DE COMPATIBILIDADE
     // =========================================================================
     void jobListener() {}
 
