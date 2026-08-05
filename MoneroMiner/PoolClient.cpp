@@ -246,7 +246,6 @@ namespace PoolClient {
             }
         } 
         catch (const std::exception& e) {
-        catch (const std::exception& e) {
             Utils::threadSafePrint("[WASM] Erro ao analisar propriedades do Job: " + std::string(e.what()), true);
         }
     }
@@ -295,7 +294,7 @@ namespace PoolClient {
     }
 
     // =========================================================================
-    // STUBS DE COMPATIBILIDADE
+    // STUBS DE COMPATIBILIDADE (Evitam erros de Undefined Symbol no Linker)
     // =========================================================================
     void jobListener() {}
 
