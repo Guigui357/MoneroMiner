@@ -195,6 +195,13 @@ namespace PoolClient {
     // =========================================================================
 
     void processNewJobFromObj(const picojson::object& obj) {
+        // Vincula as referências globais do MoneroMiner.cpp para este escopo
+        extern std::vector<std::thread> miningThreads;
+        extern void miningThread(std::shared_ptr<MiningThreadData> data);
+        extern std::thread statsWebThread;
+        extern std::atomic<bool> statsThreadRunning;
+        extern void webStatsMonitorLoop();
+
         try {
             std::string blobStr = obj.at("blob").get<std::string>();
             std::string jobId = obj.at("job_id").get<std::string>();
@@ -205,7 +212,6 @@ namespace PoolClient {
             if (RandomXManager::setTargetAndDifficulty(target)) {
                 Job job(blobStr, jobId, target, height, seedHash);
                 
-                // Envia o Job para a fila interna
                 {
                     std::lock_guard<std::mutex> lock(jobMutex);
                     jobQueue.push(job);
@@ -214,7 +220,7 @@ namespace PoolClient {
                 
                 Utils::threadSafePrint("[WASM] -> SUCESSO: Novo Job recebido do Proxy! ID: " + jobId, true);
 
-                // GATILHO AUTOMÁTICO: Se as threads de mineração ainda não foram criadas, cria agora!
+                // Inicialização sob demanda dos Workers ao receber o primeiro Job
                 if (miningThreads.empty() && !shouldStop) {
                     Utils::threadSafePrint("[WASM] Inicializando a maquina virtual RandomX (Modo Light)...", true);
                     
@@ -223,27 +229,26 @@ namespace PoolClient {
                         return;
                     }
 
-                    // Aloca memória física para as VMs das threads
+                    // CORREÇÃO: Alocação correta usando std::make_shared para bater com o tipo do vetor
                     threadData.resize(static_cast<size_t>(config.numThreads));
                     for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-                        threadData[i] = new MiningThreadData(static_cast<int>(i));
+                        threadData[i] = std::make_shared<MiningThreadData>(static_cast<int>(i));
                         if (!threadData[i]->initializeVM()) {
                             Utils::threadSafePrint("[WASM] Falha ao alocar VM para o Worker " + std::to_string(i), true);
                             return;
                         }
                     }
 
-                    // Dispara os Web Workers reais do navegador para minerar
+                    // CORREÇÃO: Dispara os Web Workers passando o ponteiro inteligente
                     for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
                         miningThreads.emplace_back(miningThread, threadData[i]);
                     }
 
-                    // Inicializa o monitor de Hashrate a cada 10s na tela
                     if (!statsThreadRunning) {
                         statsWebThread = std::thread(webStatsMonitorLoop);
                     }
                     
-                    Utils::threadSafePrint("[WASM] === WORKERS DISPARADOS COM SUCESSO! MINERAÇÃO ATIVA ===", true);
+                    Utils::threadSafePrint("[WASM] === WORKERS DISPARADOS COM SUCESSO! MINERACAO ATIVA ===", true);
                 }
             }
         } catch (const std::exception& e) {
