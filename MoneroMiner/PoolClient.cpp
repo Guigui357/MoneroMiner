@@ -98,16 +98,22 @@ namespace PoolClient {
 
     bool connect() {
         if (!emscripten_websocket_is_supported()) {
-            Utils::threadSafePrint("[WASM] Erro crítico: WebSockets não são suportados neste navegador.", true);
+            Utils::threadSafePrint("[WASM] Erro critico: WebSockets nao sao suportados neste navegador.", true);
             return false;
         }
 
-        // COLOQUE AQUI A URL ATIVA DO SEU PROXY NODE.JS NO RENDER
-        EmscriptenWebSocketCreateAttributes ws_attrs = {
-            "wss://proxy-xmr.onrender.com", 
-            NULL,
-            EM_TRUE
-        };
+        // CORREÇÃO CRUCIAL: 'static' garante que a string permaneça viva na RAM durante o handshake
+        // Substitua pela URL real do seu deploy Node.js do Render (sem barra '/' no final)
+        static const char* proxy_url = "wss://proxy-xmr.onrender.com"; 
+
+        Utils::threadSafePrint("[WASM] Tentando abrir WebSocket para: " + std::string(proxy_url), true);
+
+        EmscriptenWebSocketCreateAttributes ws_attrs;
+        std::memset(&ws_attrs, 0, sizeof(ws_attrs)); // Limpa qualquer lixo residual da pilha de memoria
+        
+        ws_attrs.url = proxy_url;
+        ws_attrs.protocols = NULL;
+        ws_attrs.createOnMainThread = EM_TRUE;
 
         wsHandle = emscripten_websocket_new(&ws_attrs);
         if (wsHandle <= 0) {
@@ -115,15 +121,14 @@ namespace PoolClient {
             return false;
         }
 
-        // Vincula os callbacks de eventos assíncronos
+        // Vincula os callbacks de eventos assíncronos do Emscripten
         emscripten_websocket_set_onmessage_callback(wsHandle, NULL, on_message_received);
         emscripten_websocket_set_onclose_callback(wsHandle, NULL, on_close_event);
 
-        // Dá uma pequena folga de tempo para o handshake inicial do protocolo WS se consolidar na Cloud
+        // Aguarda a estabilização assíncrona da conexão na rede
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
         
-        poolSocket = 1; // Ativa flag de simulação de socket aberto
-        Utils::threadSafePrint("[WASM] Canal WebSocket aberto com o Proxy.", true);
+        poolSocket = 1; // Ativa flag lógica de conectado
         return true;
     }
 
