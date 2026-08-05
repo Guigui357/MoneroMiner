@@ -205,16 +205,52 @@ namespace PoolClient {
             if (RandomXManager::setTargetAndDifficulty(target)) {
                 Job job(blobStr, jobId, target, height, seedHash);
                 
-                std::lock_guard<std::mutex> lock(jobMutex);
-                jobQueue.push(job);
-                jobAvailable.notify_one(); // Libera as threads de mineração que aguardavam Jobs
+                // Envia o Job para a fila interna
+                {
+                    std::lock_guard<std::mutex> lock(jobMutex);
+                    jobQueue.push(job);
+                    jobAvailable.notify_all();
+                }
                 
-                Utils::threadSafePrint("[WASM] -> SUCESSO: Novo Job recebido e aceito no motor! ID: " + jobId, true);
+                Utils::threadSafePrint("[WASM] -> SUCESSO: Novo Job recebido do Proxy! ID: " + jobId, true);
+
+                // GATILHO AUTOMÁTICO: Se as threads de mineração ainda não foram criadas, cria agora!
+                if (miningThreads.empty() && !shouldStop) {
+                    Utils::threadSafePrint("[WASM] Inicializando a maquina virtual RandomX (Modo Light)...", true);
+                    
+                    if (!RandomXManager::initialize(seedHash)) {
+                        Utils::threadSafePrint("[WASM] Falha critica ao inicializar gerencia do RandomX.", true);
+                        return;
+                    }
+
+                    // Aloca memória física para as VMs das threads
+                    threadData.resize(static_cast<size_t>(config.numThreads));
+                    for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
+                        threadData[i] = new MiningThreadData(static_cast<int>(i));
+                        if (!threadData[i]->initializeVM()) {
+                            Utils::threadSafePrint("[WASM] Falha ao alocar VM para o Worker " + std::to_string(i), true);
+                            return;
+                        }
+                    }
+
+                    // Dispara os Web Workers reais do navegador para minerar
+                    for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
+                        miningThreads.emplace_back(miningThread, threadData[i]);
+                    }
+
+                    // Inicializa o monitor de Hashrate a cada 10s na tela
+                    if (!statsThreadRunning) {
+                        statsWebThread = std::thread(webStatsMonitorLoop);
+                    }
+                    
+                    Utils::threadSafePrint("[WASM] === WORKERS DISPARADOS COM SUCESSO! MINERAÇÃO ATIVA ===", true);
+                }
             }
         } catch (const std::exception& e) {
             Utils::threadSafePrint("[WASM] Erro ao analisar propriedades do Job: " + std::string(e.what()), true);
         }
     }
+
 
     bool submitShare(const std::string& jobId, const std::string& nonceHex, const std::string& hashHex, const std::string& algo) {
         (void)algo;
