@@ -802,11 +802,11 @@ void webStatsMonitorLoop() {
 extern "C" {
 
     // =========================================================================
-    // FUNÇÃO: startMining - Ativada pelo clique no JavaScript
+    // FUNÇÃO: startMining - Ativada pelo clique no botão do JavaScript
     // =========================================================================
     bool startMining(const char* customWallet, const char* customWorker) {
         
-        // Se o JavaScript passou parâmetros válidos, injeta na configuração global do C++
+        // 1. Injeta os parâmetros dinâmicos do JavaScript na configuração do C++
         if (customWallet != nullptr && std::strlen(customWallet) > 0) {
             config.walletAddress = std::string(customWallet);
         }
@@ -814,25 +814,87 @@ extern "C" {
             config.workerName = std::string(customWorker);
         }
 
-        // 1. Inicializa o subsistema de rede lógico da Web
+        // 2. Inicializa o subsistema lógico do PoolClient
         if (!PoolClient::initialize()) {
             Utils::threadSafePrint("[WASM] Falha lógica ao inicializar PoolClient.", true);
             return false;
         }
         
-        // 2. Conecta o WebSocket nativo ao seu Proxy no Render
+        // 3. Dispara a abertura assíncrona do WebSocket
+        // NOTA: O login() agora é disparado automaticamente de dentro do callback 'on_ws_open'
         if (!PoolClient::connect()) {
-            Utils::threadSafePrint("[WASM] Erro: Não foi possível conectar ao Proxy via WebSocket.", true);
+            Utils::threadSafePrint("[WASM] Erro: Não foi possível disparar a abertura do WebSocket.", true);
             return false;
         }
         
-        // 3. Dispara o Handshake de login esperado pelo seu server.js
-        if (!PoolClient::login(config.walletAddress, config.password, 
-                              config.workerName, config.userAgent)) {
-            Utils::threadSafePrint("[WASM] Erro ao enviar credenciais de login para o Proxy.", true);
+        // 4. Aguarda de forma segura por até 15 segundos a chegada do primeiro Job enviado pelo seu server.js
+        Utils::threadSafePrint("[WASM] Canal de rede assíncrono inicializado. Aguardando autenticação e Job inicial...", true);
+        {
+            std::unique_lock<std::mutex> lock(PoolClient::jobMutex);
+            PoolClient::jobAvailable.wait_for(lock, std::chrono::seconds(15), 
+                [] { return !PoolClient::jobQueue.empty() || shouldStop; });
+        }
+
+        // Se o tempo esgotar ou o usuário mandar parar, aborta a criação de threads
+        if (shouldStop || PoolClient::jobQueue.empty()) {
+            Utils::threadSafePrint("[WASM] Timeout ou interrupção: Nenhum Job recebido da pool a tempo. Abortando.", true);
+            PoolClient::cleanup();
             return false;
         }
         
+        // 5. Captura o Job inicial da fila para configurar a estrutura do RandomX
+        Job* currentJob = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(PoolClient::jobMutex);
+            if (!PoolClient::jobQueue.empty()) {
+                currentJob = &PoolClient::jobQueue.front();
+            }
+        }
+
+        if (!currentJob) {
+            Utils::threadSafePrint("[WASM] Erro interno: Fila de Jobs vazia após liberação da trava.", true);
+            return false;
+        }
+
+        // 6. Inicializa o RandomX em modo compatível e leve para navegadores (Modo Light)
+        if (!RandomXManager::initialize(currentJob->seedHash)) {
+            Utils::threadSafePrint("[WASM] Falha crítica ao inicializar a gerência do RandomX.", true);
+            return false;
+        }
+
+        // 7. Aloca e inicializa as Máquinas Virtuais (VM) das Threads de Trabalho
+        threadData.resize(static_cast<size_t>(config.numThreads));
+        for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
+            threadData[i] = new MiningThreadData(static_cast<int>(i));
+            if (!threadData[i]->initializeVM()) {
+                Utils::threadSafePrint("[WASM] Falha ao alocar VM para a thread worker " + std::to_string(i), true);
+                return false;
+            }
+            if (config.debugMode && i < 4) {
+                Utils::threadSafePrint("[WASM DEBUG] VM operável criada para a thread " + std::to_string(i), true);
+            }
+        }
+        
+        if (!config.debugMode) {
+            Utils::threadSafePrint("[WASM] Sucesso: " + std::to_string(config.numThreads) + " threads de trabalho prontas.", true);
+        }
+        
+        // 8. Dispara as Threads de Mineração reais (Mapeadas como Web Workers compartilhados)
+        for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
+            miningThreads.emplace_back(miningThread, threadData[i]);
+            if (config.debugMode) {
+                Utils::threadSafePrint("[WASM DEBUG] Ativando loop de mineração na thread de ID: " + std::to_string(i), true);
+            }
+        }
+        
+        // 9. Dispara o loop em thread separada para monitorar e exibir o hashrate de 10 em 10 segundos
+        if (!statsThreadRunning) {
+            statsWebThread = std::thread(webStatsMonitorLoop);
+        }
+        
+        Utils::threadSafePrint("[WASM] === MINERAÇÃO INICIALIZADA E EXECUTANDO EM SEGUNDO PLANO ===", true);
+        return true;
+    }
         // [WEB REMOVAL]: A thread 'jobListenerThread' antiga foi removida, 
         // pois o callback assíncrono do WebSocket já captura e joga os jobs na fila.
         
