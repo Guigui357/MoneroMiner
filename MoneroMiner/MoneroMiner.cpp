@@ -734,42 +734,43 @@ bool loadConfig() {
 
 extern "C" {
 
-    // Adicionamos nullptr como valor padrão para os argumentos
-    bool startMining(const char* customWallet = nullptr, const char* customWorker = nullptr) {
+    // =========================================================================
+    // FUNÇÃO: startMining - Ativada pelo clique no JavaScript
+    // =========================================================================
+    bool startMining(const char* customWallet, const char* customWorker) {
         
-        // Se o JavaScript passou uma carteira válida, usa ela. 
-        // Caso contrário, mantém o endereço padrão já configurado no config do repositório.
+        // Se o JavaScript passou parâmetros válidos, injeta na configuração global do C++
         if (customWallet != nullptr && std::strlen(customWallet) > 0) {
             config.walletAddress = std::string(customWallet);
         }
-     
         if (customWorker != nullptr && std::strlen(customWorker) > 0) {
             config.workerName = std::string(customWorker);
         }
-    
-        // Inicializa a rede primeiro (Stubs retornam true na Web)
+
+        // 1. Inicializa o subsistema de rede lógico da Web
         if (!PoolClient::initialize()) {
+            Utils::threadSafePrint("[WASM] Falha lógica ao inicializar PoolClient.", true);
             return false;
         }
         
-        // Abre o WebSocket assíncrono com o seu proxy no Render
+        // 2. Conecta o WebSocket nativo ao seu Proxy no Render
         if (!PoolClient::connect()) {
-            Utils::threadSafePrint("Falha ao conectar via WebSocket.", true);
+            Utils::threadSafePrint("[WASM] Erro: Não foi possível conectar ao Proxy via WebSocket.", true);
             return false;
         }
         
-        // Envia os dados de autenticação (Handshake no seu server.js)
+        // 3. Dispara o Handshake de login esperado pelo seu server.js
         if (!PoolClient::login(config.walletAddress, config.password, 
                               config.workerName, config.userAgent)) {
-            Utils::threadSafePrint("Falha ao enviar login para o proxy.", true);
+            Utils::threadSafePrint("[WASM] Erro ao enviar credenciais de login para o Proxy.", true);
             return false;
         }
         
-        // CORREÇÃO WEB: Removemos a thread nativa 'jobListener', 
-        // pois o callback 'on_message_received' do WebSocket já escuta os jobs de fundo de forma assíncrona.
-
-        // Aguarda o primeiro Job enviado pelo seu server.js por até 10 segundos
-        Utils::threadSafePrint("Aguardando primeiro Job enviado pela Pool...", true);
+        // [WEB REMOVAL]: A thread 'jobListenerThread' antiga foi removida, 
+        // pois o callback assíncrono do WebSocket já captura e joga os jobs na fila.
+        
+        // 4. Aguarda por até 10 segundos a chegada do primeiro Job enviado pelo seu server.js
+        Utils::threadSafePrint("[WASM] Autenticado! Aguardando o primeiro Job da Pool...", true);
         {
             std::unique_lock<std::mutex> lock(PoolClient::jobMutex);
             PoolClient::jobAvailable.wait_for(lock, std::chrono::seconds(10), 
@@ -780,7 +781,7 @@ extern "C" {
             return false;
         }
         
-        // Captura o Job inicial da fila para configurar a Máquina Virtual do RandomX
+        // 5. Captura o Job inicial da fila para configurar a VM do RandomX
         Job* currentJob = nullptr;
         {
             std::lock_guard<std::mutex> lock(PoolClient::jobMutex);
@@ -790,50 +791,94 @@ extern "C" {
         }
 
         if (!currentJob) {
-            Utils::threadSafePrint("Nenhum Job disponível para iniciar o RandomX", true);
+            Utils::threadSafePrint("[WASM] Nenhum Job encontrado na fila para inicializar o RandomX.", true);
             return false;
         }
 
-        // Inicializa a estrutura leve do RandomX na Web (Modo Light)
+        // 6. Inicializa o RandomX em modo compatível e leve para navegadores (Modo Light)
         if (!RandomXManager::initialize(currentJob->seedHash)) {
-            Utils::threadSafePrint("Falha ao inicializar gerência do RandomX", true);
+            Utils::threadSafePrint("[WASM] Falha crítica ao inicializar a gerência do RandomX.", true);
             return false;
         }
 
-        // Inicializa as instâncias de memória de trabalho (VM) das Threads
+        // 7. Aloca e inicializa as Máquinas Virtuais (VM) das Threads de Trabalho
         threadData.resize(static_cast<size_t>(config.numThreads));
         for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
             threadData[i] = new MiningThreadData(static_cast<int>(i));
             if (!threadData[i]->initializeVM()) {
-                Utils::threadSafePrint("Falha ao iniciar VM na thread de mineração " + std::to_string(i), true);
+                Utils::threadSafePrint("[WASM] Falha ao alocar VM para a thread worker " + std::to_string(i), true);
                 return false;
             }
             if (config.debugMode && i < 4) {
-                Utils::threadSafePrint("VM operável na thread " + std::to_string(i), true);
+                Utils::threadSafePrint("[WASM DEBUG] VM operável criada para a thread " + std::to_string(i), true);
             }
         }
         
         if (!config.debugMode) {
-            Utils::threadSafePrint("Inicializado: " + std::to_string(config.numThreads) + " threads de trabalho.", true);
+            Utils::threadSafePrint("[WASM] Sucesso: " + std::to_string(config.numThreads) + " threads de trabalho prontas.", true);
         }
         
-        // Dispara as Web Worker Threads do C++ mapeadas pelo compilador
+        // 8. Dispara as Threads de Mineração reais (Web Workers mapeados pelo Emscripten)
         for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
             miningThreads.emplace_back(miningThread, threadData[i]);
             if (config.debugMode) {
-                Utils::threadSafePrint("Trabalhador ativado na thread de IDs: " + std::to_string(i), true);
+                Utils::threadSafePrint("[WASM DEBUG] Ativando loop de mineração na thread de ID: " + std::to_string(i), true);
             }
         }
         
-        if (!config.debugMode) {
-            Utils::threadSafePrint("Mineração Inicializada com Sucesso em Segundo Plano!", true);
-        } else {
-            Utils::threadSafePrint("=== MINING STARTED WITH " + std::to_string(config.numThreads) + " THREADS ===", true);
+        // 9. Dispara a thread de monitoramento de status da Web (antigo loop da sua main)
+        if (!statsThreadRunning) {
+            statsWebThread = std::thread(webStatsMonitorLoop);
         }
         
+        Utils::threadSafePrint("[WASM] === MINERAÇÃO INICIALIZADA EM SEGUNDO PLANO ===", true);
         return true;
     }
-}
+
+    // =========================================================================
+    // FUNÇÃO: stopMining - Permite interromper a mineração de forma controlada
+    // =========================================================================
+    bool stopMining() {
+        Utils::threadSafePrint("[WASM] Finalizando o motor de mineração a pedido da interface...", true);
+        
+        shouldStop = true;
+        statsThreadRunning = false;
+
+        // Aguarda a finalização segura de todas as threads trabalhadoras
+        for (auto& thread : miningThreads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+        miningThreads.clear();
+
+        // Aguarda a parada do loop de estatísticas da Web
+        if (statsWebThread.joinable()) {
+            statsWebThread.join();
+        }
+
+        // Limpa com segurança a memória das instâncias de VM alocadas
+        for (auto* data : threadData) {
+            if (data != nullptr) {
+                delete data;
+            }
+        }
+        threadData.clear();
+
+        // Executa o desmonte e limpeza das bibliotecas centrais
+        RandomXManager::cleanup();
+        PoolClient::cleanup();
+
+        // Reseta a flag atômica de parada para permitir um reinício limpo na mesma sessão
+        shouldStop = false;
+        
+        Utils::threadSafePrint("[WASM] Todos os Web Workers foram encerrados. Pronto para reiniciar.", true);
+        return true;
+    }
+
+} // Fim do bloco extern "C"
+
+/*
 int main(int argc, char* argv[]) {
     // Ensure sockets are initialized as early as possible (critical on Windows)
     if (!Platform::initializeSockets()) {
@@ -1035,3 +1080,4 @@ int main(int argc, char* argv[]) {
     
     return 0;
 }
+*/
