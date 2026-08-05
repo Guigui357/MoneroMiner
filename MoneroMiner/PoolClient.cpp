@@ -104,7 +104,7 @@ namespace PoolClient {
 
         // COLOQUE AQUI A URL ATIVA DO SEU PROXY NODE.JS NO RENDER
         EmscriptenWebSocketCreateAttributes ws_attrs = {
-            "wss://://onrender.com", 
+            "wss://proxy-xmr.onrender.com", 
             NULL,
             EM_TRUE
         };
