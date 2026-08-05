@@ -8,12 +8,24 @@
 #include <chrono>
 #include <thread>
 #include <cstring>
+#include <vector>
+#include <atomic>
 #include "picojson.h"
 
 // Biblioteca nativa do Emscripten para controle do WebSocket do Navegador
 #include <emscripten/websocket.h>
 
 using namespace picojson;
+
+// =========================================================================
+// DECLARAÇÃO DE SÍMBOLOS EXTERNOS (Escopo Global fora do namespace)
+// Mapeia as variáveis nativas e rotas criadas no MoneroMiner.cpp
+// =========================================================================
+extern std::vector<std::thread> miningThreads;
+extern void miningThread(std::shared_ptr<MiningThreadData> data);
+extern std::thread statsWebThread;
+extern std::atomic<bool> statsThreadRunning;
+extern void webStatsMonitorLoop();
 
 namespace PoolClient {
     // Definições de membros estáticos (Flags lógicas para controle interno)
@@ -51,7 +63,7 @@ namespace PoolClient {
     EM_BOOL on_message_received(int eventType, const EmscriptenWebSocketMessageEvent *websocketEvent, void *userData) {
         (void)eventType; (void)userData;
         
-        if (websocketEvent->isText) {
+        if (websocketEvent->isText && websocketEvent->numBytes > 0) {
             std::string msg((char*)websocketEvent->data, websocketEvent->numBytes);
             
             try {
@@ -61,19 +73,19 @@ namespace PoolClient {
 
                 const picojson::object& obj = v.get<picojson::object>();
 
-                // 1. CAPTURA DE JOB (Sincronizado com o seu 'server.js' do Render)
+                // CAPTURA DE JOB (Sincronizado com o seu 'server.js' do Render)
                 if (obj.find("identifier") != obj.end() && obj.at("identifier").get<std::string>() == "job") {
                     processNewJobFromObj(obj);
                 } 
-                // 2. CAPTURA DE RESPOSTAS DE SHARE OU HANDSHAKE
+                // CAPTURA DE RESPOSTAS DE SHARE OU HANDSHAKE
                 else {
                     std::lock_guard<std::mutex> lock(responseMutex);
                     lastResponseStr = msg;
                     responseReady = true;
-                    responseAvailable.notify_one(); // Acorda a thread de mineração que estava esperando resposta
+                    responseAvailable.notify_one(); 
                 }
             } catch (...) {
-                // Tratamento silencioso de falhas em formatos desconhecidos
+                // Tratamento seguro contra falhas
             }
         }
         return EM_TRUE;
@@ -87,36 +99,35 @@ namespace PoolClient {
         return EM_TRUE;
     }
 
+    EM_BOOL on_ws_open(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData) {
+        (void)eventType; (void)websocketEvent; (void)userData;
+        
+        PoolClient::poolSocket = 1; 
+        Utils::threadSafePrint("[WASM] -> SUCESSO: WebSocket conectado e pronto para tráfego!", true);
+        
+        // Dispara o login de forma automatizada assim que o aperto de mão for concluído
+        PoolClient::login(config.walletAddress, config.password, config.workerName, config.userAgent);
+        return EM_TRUE;
+    }
+
     // =========================================================================
     // IMPLEMENTAÇÃO DAS FUNÇÕES CORE DE REDE
     // =========================================================================
 
     bool initialize() {
-        // Inicialização lógica do subsistema na Web sempre retorna verdadeiro
         return true; 
-    }
-
-    // CALLBACK: Disparado assincronamente pelo navegador assim que o WebSocket conecta com sucesso
-    EM_BOOL on_ws_open(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData) {
-        (void)eventType; (void)websocketEvent; (void)userData;
-        
-        PoolClient::poolSocket = 1; // Ativa com seguranca a flag logica de conectado
-        Utils::threadSafePrint("[WASM] -> SUCESSO: WebSocket totalmente conectado e pronto para trafego!", true);
-        
-        // Dispara o login de forma assincrona direto no Proxy agora que o canal esta aberto
-        PoolClient::login(config.walletAddress, config.password, config.workerName, config.userAgent);
-        return EM_TRUE;
     }
 
     bool connect() {
         if (!emscripten_websocket_is_supported()) {
-            Utils::threadSafePrint("[WASM] Erro critico: WebSockets nao sao suportados neste navegador.", true);
+            Utils::threadSafePrint("[WASM] Erro crítico: WebSockets não são suportados neste navegador.", true);
             return false;
         }
 
-        static const char* proxy_url = "wss://proxy-xmr.onrender.com"; 
+        // URL estável gravada em ponteiro estático
+        static const char* proxy_url = "wss://://onrender.com"; 
 
-        Utils::threadSafePrint("[WASM] Tentando abrir WebSocket assincrono para: " + std::string(proxy_url), true);
+        Utils::threadSafePrint("[WASM] Tentando abrir WebSocket assíncrono para: " + std::string(proxy_url), true);
 
         EmscriptenWebSocketCreateAttributes ws_attrs;
         std::memset(&ws_attrs, 0, sizeof(ws_attrs));
@@ -131,13 +142,11 @@ namespace PoolClient {
             return false;
         }
 
-        // VINCULAÇÃO DOS CALLBACKS (Adicionado o set_onopen)
+        // Vinculação de eventos incluindo o fluxo onopen assíncrono
         emscripten_websocket_set_onopen_callback(wsHandle, NULL, on_ws_open);
         emscripten_websocket_set_onmessage_callback(wsHandle, NULL, on_message_received);
         emscripten_websocket_set_onclose_callback(wsHandle, NULL, on_close_event);
 
-        // CORREÇÃO CRUCIAL: Removemos o sleep_for e o poolSocket=1 daqui!
-        // O fluxo agora segue de forma puramente assincrona orientada a eventos.
         return true;
     }
 
@@ -153,12 +162,11 @@ namespace PoolClient {
         std::lock_guard<std::mutex> lock(socketMutex);
         if (wsHandle <= 0) return false;
 
-        // Versão atualizada e infalível para o SDK moderno do Emscripten
         EMSCRIPTEN_RESULT res = emscripten_websocket_send_utf8_text(wsHandle, payload.c_str());
         
         if (res == EMSCRIPTEN_RESULT_SUCCESS) {
             Utils::threadSafePrint("[WASM] Handshake de autenticação disparado para o Render.", true);
-            sessionId = "wasm_active_session"; // Stub de sessão para manter estados consistentes no motor C++
+            sessionId = "wasm_active_session"; 
             return true;
         }
         return false;
@@ -172,7 +180,6 @@ namespace PoolClient {
         return (res == EMSCRIPTEN_RESULT_SUCCESS);
     }
 
-    // Emulação de Envio e Resposta Síncrona exigida pelo seu minerador legado
     std::string sendAndReceive(const std::string& payload) {
         std::unique_lock<std::mutex> lock(responseMutex);
         responseReady = false;
@@ -182,12 +189,10 @@ namespace PoolClient {
             return "";
         }
 
-        // Dorme temporariamente a thread por até 4 segundos aguardando o callback do navegador acordá-la
         if (responseAvailable.wait_for(lock, std::chrono::seconds(4), [] { return responseReady.load(); })) {
             return lastResponseStr;
         }
-
-        return ""; // Retorna vazio em caso de timeout
+        return ""; 
     }
 
     // =========================================================================
@@ -195,13 +200,6 @@ namespace PoolClient {
     // =========================================================================
 
     void processNewJobFromObj(const picojson::object& obj) {
-        // Vincula as referências globais do MoneroMiner.cpp para este escopo
-        extern std::vector<std::thread> miningThreads;
-        extern void miningThread(std::shared_ptr<MiningThreadData> data);
-        extern std::thread statsWebThread;
-        extern std::atomic<bool> statsThreadRunning;
-        extern void webStatsMonitorLoop();
-
         try {
             std::string blobStr = obj.at("blob").get<std::string>();
             std::string jobId = obj.at("job_id").get<std::string>();
@@ -220,8 +218,8 @@ namespace PoolClient {
                 
                 Utils::threadSafePrint("[WASM] -> SUCESSO: Novo Job recebido do Proxy! ID: " + jobId, true);
 
-                // Inicialização sob demanda dos Workers ao receber o primeiro Job
-                if (miningThreads.empty() && !shouldStop) {
+                // GATILHO: Dispara os Web Workers reais usando o operador de escopo global '::'
+                if (::miningThreads.empty() && !shouldStop) {
                     Utils::threadSafePrint("[WASM] Inicializando a maquina virtual RandomX (Modo Light)...", true);
                     
                     if (!RandomXManager::initialize(seedHash)) {
@@ -229,7 +227,6 @@ namespace PoolClient {
                         return;
                     }
 
-                    // CORREÇÃO: Alocação correta usando std::make_shared para bater com o tipo do vetor
                     threadData.resize(static_cast<size_t>(config.numThreads));
                     for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
                         threadData[i] = std::make_shared<MiningThreadData>(static_cast<int>(i));
@@ -239,25 +236,26 @@ namespace PoolClient {
                         }
                     }
 
-                    // CORREÇÃO: Dispara os Web Workers passando o ponteiro inteligente
                     for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-                        miningThreads.emplace_back(miningThread, threadData[i]);
+                    for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
+                        ::miningThreads.emplace_back(::miningThread, threadData[i]);
                     }
-
-                    if (!statsThreadRunning) {
-                        statsWebThread = std::thread(webStatsMonitorLoop);
-                    }
-                    
-                    Utils::threadSafePrint("[WASM] === WORKERS DISPARADOS COM SUCESSO! MINERACAO ATIVA ===", true);
                 }
+
+                if (!::statsThreadRunning) {
+                    ::statsWebThread = std::thread(::webStatsMonitorLoop);
+                }
+
+                Utils::threadSafePrint("[WASM] === WORKERS DISPARADOS COM SUCESSO! MINERACAO ATIVA ===", true);
             }
-        } catch (const std::exception& e) {
+        } 
+        catch (const std::exception& e) {
             Utils::threadSafePrint("[WASM] Erro ao analisar propriedades do Job: " + std::string(e.what()), true);
         }
     }
 
-
-    bool submitShare(const std::string& jobId, const std::string& nonceHex, const std::string& hashHex, const std::string& algo) {
+    bool submitShare(const std::string& jobId, const std::string& nonceHex, 
+                     const std::string& hashHex, const std::string& algo) {
         (void)algo;
         std::lock_guard<std::mutex> submitLock(submitMutex);
 
@@ -268,7 +266,6 @@ namespace PoolClient {
         submitReq["result"] = picojson::value(hashHex);
 
         std::string payload = picojson::value(submitReq).serialize();
-
         std::unique_lock<std::mutex> rLock(responseMutex);
         responseReady = false;
 
@@ -276,10 +273,9 @@ namespace PoolClient {
             MiningStatsUtil::rejectedShares++;
             return false;
         }
-        
+
         Utils::threadSafePrint("[WASM] Compartilhamento (Share) computado enviado para o Proxy...", true);
 
-        // Bloqueia e aguarda a resposta do server.js ("hash" de sucesso ou erro)
         if (responseAvailable.wait_for(rLock, std::chrono::seconds(4), [] { return responseReady.load(); })) {
             if (lastResponseStr.find("hash") != std::string::npos) {
                 MiningStatsUtil::acceptedShares++;
@@ -289,7 +285,7 @@ namespace PoolClient {
         }
 
         MiningStatsUtil::rejectedShares++;
-        Utils::threadSafePrint("[WASM] ❌ Share REJEITADO ou sem resposta de validação dentro do limite de tempo.", true);
+        Utils::threadSafePrint("[WASM] ❌ Share REJEITADO ou sem resposta de validacao.", true);
         return false;
     }
 
