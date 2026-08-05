@@ -732,6 +732,73 @@ bool loadConfig() {
     }
 }
 
+// 1. Definição da thread global de monitoramento para podermos manipular na Web
+static std::thread statsWebThread;
+static std::atomic<bool> statsThreadRunning(false);
+
+// Loop de monitoramento de performance adaptado da sua main original
+void webStatsMonitorLoop() {
+    statsThreadRunning = true;
+    auto lastStatsTime = std::chrono::steady_clock::now();
+    int secondsCounter = 0;
+    auto lastJobTime = std::chrono::steady_clock::now();
+
+    while (statsThreadRunning && !shouldStop) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        secondsCounter++;
+
+        // Verifica se recebemos jobs recentemente
+        {
+            std::lock_guard<std::mutex> lock(PoolClient::jobMutex);
+            if (!PoolClient::jobQueue.empty()) {
+                lastJobTime = std::chrono::steady_clock::now();
+            }
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        auto jobTimeout = std::chrono::duration_cast<std::chrono::seconds>(now - lastJobTime).count();
+
+        // Se passar 5 minutos sem jobs, reseta a lógica por timeout
+        if (jobTimeout > 300) {
+            Utils::threadSafePrint("[WASM ERROR] Sem jobs recebidos por 5 minutos - Conexão morta", true);
+            shouldStop = true;
+            break;
+        }
+
+        // Calcula e cospe o Hashrate a cada 10 segundos direto no index.html
+        if (secondsCounter >= 10) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastStatsTime).count();
+            if (elapsed >= 10) {
+                double totalHashrate = 0.0;
+                for (size_t i = 0; i < threadData.size(); i++) {
+                    if (threadData[i] != nullptr) {
+                        totalHashrate += threadData[i]->getHashrate();
+                    }
+                }
+
+                uint64_t currentDiff = 0;
+                {
+                    std::lock_guard<std::mutex> lock(PoolClient::jobMutex);
+                    if (!PoolClient::jobQueue.empty()) {
+                        currentDiff = PoolClient::jobQueue.front().difficulty;
+                    }
+                }
+
+                std::stringstream ss;
+                ss << "📊 Hashrate Total: " << std::fixed << std::setprecision(1) << totalHashrate << " H/s";
+                ss << " | Dificuldade: " << currentDiff;
+                ss << " | Aceitos: " << MiningStatsUtil::acceptedShares.load();
+                ss << " | Rejeitados: " << MiningStatsUtil::rejectedShares.load();
+
+                Utils::threadSafePrint(ss.str(), true); // true para forçar quebra de linha no HTML
+                lastStatsTime = now;
+                secondsCounter = 0;
+            }
+        }
+    }
+    statsThreadRunning = false;
+}
+
 extern "C" {
 
     // =========================================================================
