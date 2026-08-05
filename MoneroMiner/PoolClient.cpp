@@ -96,20 +96,30 @@ namespace PoolClient {
         return true; 
     }
 
+    // CALLBACK: Disparado assincronamente pelo navegador assim que o WebSocket conecta com sucesso
+    EM_BOOL on_ws_open(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData) {
+        (void)eventType; (void)websocketEvent; (void)userData;
+        
+        PoolClient::poolSocket = 1; // Ativa com seguranca a flag logica de conectado
+        Utils::threadSafePrint("[WASM] -> SUCESSO: WebSocket totalmente conectado e pronto para trafego!", true);
+        
+        // Dispara o login de forma assincrona direto no Proxy agora que o canal esta aberto
+        PoolClient::login(config.walletAddress, config.password, config.workerName, config.userAgent);
+        return EM_TRUE;
+    }
+
     bool connect() {
         if (!emscripten_websocket_is_supported()) {
             Utils::threadSafePrint("[WASM] Erro critico: WebSockets nao sao suportados neste navegador.", true);
             return false;
         }
 
-        // CORREÇÃO CRUCIAL: 'static' garante que a string permaneça viva na RAM durante o handshake
-        // Substitua pela URL real do seu deploy Node.js do Render (sem barra '/' no final)
         static const char* proxy_url = "wss://proxy-xmr.onrender.com"; 
 
-        Utils::threadSafePrint("[WASM] Tentando abrir WebSocket para: " + std::string(proxy_url), true);
+        Utils::threadSafePrint("[WASM] Tentando abrir WebSocket assincrono para: " + std::string(proxy_url), true);
 
         EmscriptenWebSocketCreateAttributes ws_attrs;
-        std::memset(&ws_attrs, 0, sizeof(ws_attrs)); // Limpa qualquer lixo residual da pilha de memoria
+        std::memset(&ws_attrs, 0, sizeof(ws_attrs));
         
         ws_attrs.url = proxy_url;
         ws_attrs.protocols = NULL;
@@ -121,14 +131,13 @@ namespace PoolClient {
             return false;
         }
 
-        // Vincula os callbacks de eventos assíncronos do Emscripten
+        // VINCULAÇÃO DOS CALLBACKS (Adicionado o set_onopen)
+        emscripten_websocket_set_onopen_callback(wsHandle, NULL, on_ws_open);
         emscripten_websocket_set_onmessage_callback(wsHandle, NULL, on_message_received);
         emscripten_websocket_set_onclose_callback(wsHandle, NULL, on_close_event);
 
-        // Aguarda a estabilização assíncrona da conexão na rede
-        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-        
-        poolSocket = 1; // Ativa flag lógica de conectado
+        // CORREÇÃO CRUCIAL: Removemos o sleep_for e o poolSocket=1 daqui!
+        // O fluxo agora segue de forma puramente assincrona orientada a eventos.
         return true;
     }
 
