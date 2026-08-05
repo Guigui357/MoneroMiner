@@ -848,7 +848,7 @@ extern "C" {
 
         threadData.resize(static_cast<size_t>(config.numThreads));
         for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-            threadData[i] = std::make_shared<MiningThreadData>(static_cast<int>(i));
+            threadData[i] = new MiningThreadData(static_cast<int>(i));
             if (!threadData[i]->initializeVM()) {
                 Utils::threadSafePrint("[WASM] Falha ao alocar VM para a thread worker " + std::to_string(i), true);
                 return false;
