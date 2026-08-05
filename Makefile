@@ -11,11 +11,10 @@ CFLAGS = -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -s ALLOW_MEMORY_GROWTH=1 \
                    -s INITIAL_MEMORY=536870912 \
-                   -s PROXY_TO_PTHREAD=1 \
                    -lwebsocket.js \
                    -s SHARED_MEMORY=1 \
                    -s ENVIRONMENT="web,worker" \
-                   -s EXPORTED_FUNCTIONS="['_startMining', '_stopMining']" \
+                   -s EXPORTED_FUNCTIONS="['_startMining', '_stopMining', '_main']" \
                    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','wasmMemory']" \
                    -Wno-pthreads-mem-growth
 
