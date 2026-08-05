@@ -1107,13 +1107,3 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 */
-
-// Deixe a main visível para o linker, mas sem código de loop para não iniciar sozinha!
-extern "C" {
-    int main(int argc, char* argv[]) {
-        (void)argc;
-        (void)argv;
-        Utils::threadSafePrint("[WASM] Subsistema de Threads do Emscripten pronto para comandos.", true);
-        return 0;
-    }
-}
