@@ -557,8 +557,8 @@ extern "C" {
     int sysinfo(struct sysinfo *info) {
         if (!info) return -1;
         std::memset(info, 0, sizeof(struct sysinfo));
-        info->totalram = 4096ULL * 1024ULL * 1024ULL; // Simula 4GB Total
-        info->freeram  = 2048ULL * 1024ULL * 1024ULL; // Simula 2GB Livre
+        info->totalram = 3072ULL * 1024ULL * 1024ULL; 
+        info->freeram  = 1536ULL * 1024ULL * 1024ULL; 
         info->mem_unit = 1;
         return 0;
     }
