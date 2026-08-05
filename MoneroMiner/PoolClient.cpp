@@ -18,16 +18,19 @@
 using namespace picojson;
 
 // =========================================================================
-// DECLARAÇÃO DE SÍMBOLOS EXTERNOS (Escopo Global fora do namespace)
+// DECLARAÇÃO DE SÍMBOLOS EXTERNOS (Escopo Global com C-Linkage)
+// Garante o casamento perfeito dos nomes na compilação do Emscripten
 // =========================================================================
-extern std::vector<std::thread> miningThreads;
-extern void miningThread(std::shared_ptr<MiningThreadData> data);
-extern std::thread statsWebThread;
-extern std::atomic<bool> statsThreadRunning;
-extern void webStatsMonitorLoop();
+extern "C" {
+    extern std::vector<std::thread> miningThreads;
+    extern void miningThread(std::shared_ptr<MiningThreadData> data);
+    extern std::thread statsWebThread;
+    extern std::atomic<bool> statsThreadRunning;
+    extern void webStatsMonitorLoop();
+}
 
 namespace PoolClient {
-    // Definições de membros estáticos
+    // Definições de membros estáticos (Flags lógicas para controle interno)
     socket_t poolSocket = INVALID_SOCKET_VALUE; 
     EMSCRIPTEN_WEBSOCKET_T wsHandle = 0;        
 
@@ -56,7 +59,7 @@ namespace PoolClient {
     bool processShareResponse(const std::string& response);
 
     // =========================================================================
-    // CALLBACKS DO WEBSOCKET
+    // CALLBACKS DO WEBSOCKET (Executados na Thread do Navegador)
     // =========================================================================
 
     EM_BOOL on_message_received(int eventType, const EmscriptenWebSocketMessageEvent *websocketEvent, void *userData) {
@@ -73,7 +76,7 @@ namespace PoolClient {
                 if (v.is<picojson::object>()) {
                     const picojson::object& obj = v.get<picojson::object>();
 
-                    // CAPTURA DE JOB
+                    // CAPTURA DE JOB (Sincronizado com o seu 'server.js' do Render)
                     if (obj.find("identifier") != obj.end() && obj.at("identifier").get<std::string>() == "job") {
                         processNewJobFromObj(obj);
                     } 
@@ -86,7 +89,7 @@ namespace PoolClient {
                     }
                 }
             } catch (...) {
-                // Prevenção de exceções
+                // Tratamento seguro contra falhas
             }
         }
         return EM_TRUE;
@@ -106,6 +109,7 @@ namespace PoolClient {
         PoolClient::poolSocket = 1; 
         Utils::threadSafePrint("[WASM] -> SUCESSO: WebSocket conectado e pronto para tráfego!", true);
         
+        // Dispara o login de forma automatizada assim que o aperto de mão for concluído
         PoolClient::login(config.walletAddress, config.password, config.workerName, config.userAgent);
         return EM_TRUE;
     }
@@ -124,6 +128,7 @@ namespace PoolClient {
             return false;
         }
 
+        // URL estável do seu Proxy Node.js hospedado no Render
         static const char* proxy_url = "wss://://onrender.com"; 
 
         Utils::threadSafePrint("[WASM] Tentando abrir WebSocket assíncrono para: " + std::string(proxy_url), true);
@@ -216,11 +221,12 @@ namespace PoolClient {
                 
                 Utils::threadSafePrint("[WASM] -> SUCESSO: Novo Job recebido do Proxy! ID: " + jobId, true);
 
+                // Forçamos o uso do escopo global explicitamente usando o operador '::'
                 if (::miningThreads.empty() && !shouldStop) {
-                    Utils::threadSafePrint("[WASM] Inicializando a maquina virtual RandomX (Modo Light)...", true);
+                    Utils::threadSafePrint("[WASM] Inicializando a máquina virtual RandomX (Modo Light)...", true);
                     
                     if (!RandomXManager::initialize(seedHash)) {
-                        Utils::threadSafePrint("[WASM] Falha critica ao inicializar gerencia do RandomX.", true);
+                        Utils::threadSafePrint("[WASM] Falha crítica ao inicializar gerência do RandomX.", true);
                         return;
                     }
 
@@ -234,6 +240,7 @@ namespace PoolClient {
                     }
 
                     for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
+                    for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
                         ::miningThreads.emplace_back(::miningThread, threadData[i]);
                     }
                 }
@@ -242,7 +249,7 @@ namespace PoolClient {
                     ::statsWebThread = std::thread(::webStatsMonitorLoop);
                 }
 
-                Utils::threadSafePrint("[WASM] === WORKERS DISPARADOS COM SUCESSO! MINERACAO ATIVA ===", true);
+                Utils::threadSafePrint("[WASM] === WORKERS DISPARADOS COM SUCESSO! MINERAÇÃO ATIVA ===", true);
             }
         } 
         catch (const std::exception& e) {
@@ -281,7 +288,7 @@ namespace PoolClient {
         }
 
         MiningStatsUtil::rejectedShares++;
-        Utils::threadSafePrint("[WASM] ❌ Share REJEITADO ou sem resposta de validacao.", true);
+        Utils::threadSafePrint("[WASM] ❌ Share REJEITADO ou sem resposta de validação.", true);
         return false;
     }
 
@@ -294,7 +301,7 @@ namespace PoolClient {
     }
 
     // =========================================================================
-    // STUBS DE COMPATIBILIDADE (Evitam erros de Undefined Symbol no Linker)
+    // STUBS DE COMPATIBILIDADE
     // =========================================================================
     void jobListener() {}
 
