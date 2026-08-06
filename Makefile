@@ -16,7 +16,8 @@ EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -s ENVIRONMENT="web,worker" \
                    -s EXPORTED_FUNCTIONS="['_startMining', '_stopMining', '_main']" \
                    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','wasmMemory']" \
-                   -Wno-pthreads-mem-growth
+                   -Wno-pthreads-mem-growth \
+                   -sPROXY_TO_PTHREAD
 
 LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
 
