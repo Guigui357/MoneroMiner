@@ -7,7 +7,12 @@
 #include <queue>
 #include <vector>
 #include <fstream>
+#include <thread>
 
+// Global thread variables - defined in MoneroMiner.cpp
+extern std::thread statsWebThread;
+extern std::atomic<bool> statsThreadRunning;
+extern std::vector<std::thread> miningThreads;
 // Forward declarations
 class Config;
 class MiningThreadData;
