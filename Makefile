@@ -5,7 +5,7 @@ CXX = em++
 CC = emcc
 
 # Otimizações pesadas para WebAssembly e SIMD de 128 bits para o RandomX
-CXXFLAGS = -std=c++14 -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
+CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 CFLAGS = -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 
 EMSCRIPTEN_FLAGS = -s WASM=1 \
