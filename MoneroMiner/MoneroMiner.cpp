@@ -732,9 +732,8 @@ bool loadConfig() {
     }
 }
 
-// Definições globais de controle para o monitoramento web (Coloque logo acima do extern "C")
-static std::thread statsWebThread;
-static std::atomic<bool> statsThreadRunning(false);
+std::thread statsWebThread;
+std::atomic<bool> statsThreadRunning(false);
 
 void webStatsMonitorLoop() {
     statsThreadRunning = true;
