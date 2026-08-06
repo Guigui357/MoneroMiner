@@ -120,7 +120,6 @@ namespace PoolClient {
         }
 
         static const char* proxy_url = "ws://localhost:8080/ws"; 
-
         Utils::threadSafePrint("[WASM] Tentando abrir WebSocket assíncrono para: " + std::string(proxy_url), true);
 
         EmscriptenWebSocketCreateAttributes ws_attrs;
@@ -136,6 +135,7 @@ namespace PoolClient {
             return false;
         }
 
+        // Registra os ganchos de eventos que gerenciarão o fluxo assíncrono
         emscripten_websocket_set_onopen_callback(wsHandle, NULL, on_ws_open);
         emscripten_websocket_set_onmessage_callback(wsHandle, NULL, on_message_received);
         emscripten_websocket_set_onclose_callback(wsHandle, NULL, on_close_event);
