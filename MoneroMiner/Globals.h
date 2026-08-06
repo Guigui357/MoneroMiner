@@ -8,11 +8,20 @@
 #include <vector>
 #include <fstream>
 #include <thread>
+#include <memory>
 
-// Global thread variables - defined in MoneroMiner.cpp
+class MiningThreadData;
+
+// Global variables
+extern std::vector<std::thread> miningThreads;
 extern std::thread statsWebThread;
 extern std::atomic<bool> statsThreadRunning;
-extern std::vector<std::thread> miningThreads;
+extern std::atomic<bool> shouldStop;
+
+// Global functions
+void miningThread(std::shared_ptr<MiningThreadData> data);
+void webStatsMonitorLoop();
+
 // Forward declarations
 class Config;
 class MiningThreadData;
