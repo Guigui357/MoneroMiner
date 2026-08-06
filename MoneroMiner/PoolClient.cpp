@@ -30,7 +30,7 @@ extern "C" {
 }
 
 namespace PoolClient {
-    // Definições de membros estáticos (Flags lógicas para controle interno)
+    // Definições de membros estáticos
     socket_t poolSocket = INVALID_SOCKET_VALUE; 
     EMSCRIPTEN_WEBSOCKET_T wsHandle = 0;        
 
@@ -76,7 +76,7 @@ namespace PoolClient {
                 if (v.is<picojson::object>()) {
                     const picojson::object& obj = v.get<picojson::object>();
 
-                    // CAPTURA DE JOB (Sincronizado com o seu 'server.js' do Render)
+                    // CAPTURA DE JOB
                     if (obj.find("identifier") != obj.end() && obj.at("identifier").get<std::string>() == "job") {
                         processNewJobFromObj(obj);
                     } 
@@ -109,7 +109,6 @@ namespace PoolClient {
         PoolClient::poolSocket = 1; 
         Utils::threadSafePrint("[WASM] -> SUCESSO: WebSocket conectado e pronto para tráfego!", true);
         
-        // Dispara o login de forma automatizada assim que o aperto de mão for concluído
         PoolClient::login(config.walletAddress, config.password, config.workerName, config.userAgent);
         return EM_TRUE;
     }
@@ -128,7 +127,6 @@ namespace PoolClient {
             return false;
         }
 
-        // URL estável do seu Proxy Node.js hospedado no Render
         static const char* proxy_url = "wss://://onrender.com"; 
 
         Utils::threadSafePrint("[WASM] Tentando abrir WebSocket assíncrono para: " + std::string(proxy_url), true);
@@ -221,7 +219,6 @@ namespace PoolClient {
                 
                 Utils::threadSafePrint("[WASM] -> SUCESSO: Novo Job recebido do Proxy! ID: " + jobId, true);
 
-                // Forçamos o uso do escopo global explicitamente usando o operador '::'
                 if (::miningThreads.empty() && !shouldStop) {
                     Utils::threadSafePrint("[WASM] Inicializando a máquina virtual RandomX (Modo Light)...", true);
                     
@@ -240,7 +237,6 @@ namespace PoolClient {
                     }
 
                     for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-                    for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
                         ::miningThreads.emplace_back(::miningThread, threadData[i]);
                     }
                 }
@@ -257,7 +253,7 @@ namespace PoolClient {
         }
     }
 
-    bool submitShare(const std::string& jobId, const std::string& nonceHex, 
+    bool submitShare(const std::string& jobId, const std::string& nonceHex,
                      const std::string& hashHex, const std::string& algo) {
         (void)algo;
         std::lock_guard<std::mutex> submitLock(submitMutex);
@@ -305,27 +301,32 @@ namespace PoolClient {
     // =========================================================================
     void jobListener() {}
 
-    void processNewJob(const picojson::object& jobObj) { 
-        (void)jobObj; 
+    void processNewJob(const picojson::object& jobObj) {
+        (void)jobObj;
     }
 
-    void distributeJob(const Job& job) { 
-        (void)job; 
+    void distributeJob(const Job& job) {
+        (void)job;
     }
 
-    std::string receiveData(socket_t sock) { 
-        (void)sock; 
-        return ""; 
+    std::string receiveData(socket_t sock) {
+        (void)sock;
+        return "";
     }
 
-    std::string sendData(const std::string& data) { 
-        (void)data; 
-        return ""; 
+    std::string sendData(const std::string& data) {
+        (void)data;
+        return "";
     }
 
-    bool reconnect() { 
-        return connect(); 
+    bool reconnect() {
+        return connect();
     }
 
     void sendKeepalive() {}
+
+    bool processShareResponse(const std::string& response) {
+        (void)response;
+        return true;
+    }
 }
