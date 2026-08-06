@@ -46,7 +46,6 @@ extern std::string sessionId;
 extern std::vector<MiningThreadData*> threadData;
 
 // Global variables
-std::vector<std::thread> miningThreads;
 std::thread jobListenerThread;
 
 // Forward declarations
@@ -734,6 +733,7 @@ bool loadConfig() {
 
 std::thread statsWebThread;
 std::atomic<bool> statsThreadRunning(false);
+std::vector<std::thread> miningThreads;
 
 void webStatsMonitorLoop() {
     statsThreadRunning = true;
