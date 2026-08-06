@@ -225,7 +225,7 @@ namespace PoolClient {
                     }
 
                     for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-                        ::miningThreads.emplace_back(miningThread, threadData[i]);
+                        ::miningThreads.push_back(std::thread(static_cast<void(*)(MiningThreadData*)>(miningThread), threadData[i].get()));
                     }
                 }
 
