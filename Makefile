@@ -18,6 +18,7 @@ EMSCRIPTEN_FLAGS = -s WASM=1 \
                    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','wasmMemory']" \
                    -Wno-pthreads-mem-growth \
                    -sPROXY_TO_PTHREAD
+                   -sPTHREAD_POOL_SIZE=4
 
 LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
 
