@@ -857,7 +857,7 @@ extern "C" {
         Utils::threadSafePrint("[WASM] Sucesso: " + std::to_string(config.numThreads) + " threads de trabalho prontas.", true);
         
         for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-            miningThreads.emplace_back(miningThread, threadData[i].get());
+            miningThreads.emplace_back(miningThread, threadData[i]);
         }
         
         if (!statsThreadRunning) {
