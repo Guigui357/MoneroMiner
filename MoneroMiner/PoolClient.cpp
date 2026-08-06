@@ -17,6 +17,8 @@
 
 using namespace picojson;
 
+extern void miningThread(MiningThreadData* data);
+
 namespace PoolClient {
     // Definições de membros estáticos
     socket_t poolSocket = INVALID_SOCKET_VALUE; 
@@ -45,8 +47,7 @@ namespace PoolClient {
     bool sendRequest(const std::string& request);
     void processNewJobFromObj(const picojson::object& obj);
     bool processShareResponse(const std::string& response);
-    extern void miningThread(MiningThreadData* data);
-
+    
     // =========================================================================
     // CALLBACKS DO WEBSOCKET (Executados na Thread do Navegador)
     // =========================================================================
