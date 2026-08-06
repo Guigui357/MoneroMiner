@@ -99,9 +99,11 @@ namespace PoolClient {
         PoolClient::poolSocket = 1; 
         Utils::threadSafePrint("[WASM] -> SUCESSO: WebSocket conectado e pronto para tráfego!", true);
         
+        // CORREÇÃO CRÍTICA: Dispara a autenticação somente agora que o canal está de fato pronto
         PoolClient::login(config.walletAddress, config.password, config.workerName, config.userAgent);
         return EM_TRUE;
     }
+
 
     // =========================================================================
     // IMPLEMENTAÇÃO DAS FUNÇÕES CORE DE REDE
