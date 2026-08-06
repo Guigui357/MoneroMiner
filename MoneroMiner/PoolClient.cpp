@@ -142,12 +142,20 @@ namespace PoolClient {
     }
 
     bool login(const std::string& wallet, const std::string& password, const std::string& worker, const std::string& userAgent) {
-        (void)password; (void)worker; (void)userAgent;
-
         picojson::object loginReq;
-        loginReq["identifier"] = picojson::value("handshake");
-        loginReq["wallet"] = picojson::value(wallet);
-        
+        picojson::object paramsObj;
+
+        // 1. Monta o objeto de parâmetros interno com 4 blocos de indentação
+        paramsObj["login"] = picojson::value(wallet);
+        paramsObj["pass"] = picojson::value(worker.empty() ? "WasmMiner" : worker);
+        paramsObj["agent"] = picojson::value(userAgent.empty() ? "XMR-CryptoNightWeb/1.0" : userAgent);
+
+        // 2. Monta o JSON-RPC principal na raiz
+        loginReq["identifier"] = picojson::value("handshake"); 
+        loginReq["method"] = picojson::value("login");         
+        loginReq["id"] = picojson::value(1.0);                 
+        loginReq["params"] = picojson::value(paramsObj);       
+
         std::string payload = picojson::value(loginReq).serialize();
         
         std::lock_guard<std::mutex> lock(socketMutex);
@@ -156,7 +164,7 @@ namespace PoolClient {
         EMSCRIPTEN_RESULT res = emscripten_websocket_send_utf8_text(wsHandle, payload.c_str());
         
         if (res == EMSCRIPTEN_RESULT_SUCCESS) {
-            Utils::threadSafePrint("[WASM] Handshake de autenticação disparado para o Render.", true);
+            Utils::threadSafePrint("[WASM] Handshake de autenticação padronizado disparado.", true);
             sessionId = "wasm_active_session"; 
             return true;
         }
