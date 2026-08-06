@@ -17,18 +17,6 @@
 
 using namespace picojson;
 
-// =========================================================================
-// DECLARAÇÃO DE SÍMBOLOS EXTERNOS (Escopo Global com C-Linkage)
-// Garante o casamento perfeito dos nomes na compilação do Emscripten
-// =========================================================================
-extern "C" {
-    extern std::vector<std::thread> miningThreads;
-    extern void miningThread(std::shared_ptr<MiningThreadData> data);
-    extern std::thread statsWebThread;
-    extern std::atomic<bool> statsThreadRunning;
-    extern void webStatsMonitorLoop();
-}
-
 namespace PoolClient {
     // Definições de membros estáticos
     socket_t poolSocket = INVALID_SOCKET_VALUE; 
