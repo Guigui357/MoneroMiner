@@ -53,7 +53,7 @@ void printHelp();
 bool validateConfig();
 void signalHandler(int signum);
 void printConfig();
-void miningThread(MiningThreadData* data);
+extern void miningThread(MiningThreadData* data);
 bool loadConfig();
 
 // New function: Get detailed CPU information
