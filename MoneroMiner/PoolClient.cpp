@@ -225,12 +225,12 @@ namespace PoolClient {
                     }
 
                     for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-                        ::miningThreads.emplace_back(::miningThread, threadData[i]);
+                        ::miningThreads.emplace_back(miningThread, threadData[i].get());
                     }
                 }
 
                 if (!::statsThreadRunning) {
-                    ::statsWebThread = std::thread(::webStatsMonitorLoop);
+                    ::statsWebThread = std::thread(webStatsMonitorLoop);
                 }
 
                 Utils::threadSafePrint("[WASM] === WORKERS DISPARADOS COM SUCESSO! MINERAÇÃO ATIVA ===", true);
