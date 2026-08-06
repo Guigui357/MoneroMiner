@@ -18,8 +18,7 @@ extern std::thread statsWebThread;
 extern std::atomic<bool> statsThreadRunning;
 extern std::atomic<bool> shouldStop;
 
-// Global functions
-void miningThread(std::shared_ptr<MiningThreadData> data);
+extern void miningThread(std::shared_ptr<MiningThreadData> data);
 void webStatsMonitorLoop();
 
 // Forward declarations
