@@ -41,7 +41,9 @@ jobs:
     # 5. Roda o comando Make usando o seu Makefile reestruturado para WebAssembly
     - name: Compile Project via Makefile
       run: |
-        make -j$(nproc)
+        make clean
+        make -j$(nproc) 
+        
 
     # 6. Salva os arquivos miner.js e miner.wasm gerados para você baixar no painel do GitHub
     - name: Upload WebAssembly Artifacts
