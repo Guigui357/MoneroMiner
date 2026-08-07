@@ -15,7 +15,7 @@ EMSCRIPTEN_FLAGS = \
     -s ENVIRONMENT="web,worker" \
     -s EXPORTED_FUNCTIONS="['_startMining','_stopMining','_main']" \
     -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','wasmMemory']" \
-    -lwebsocket.js
+    -lwebsocket.js\
     -s SINGLE_FILE=1
 
 LDFLAGS = $(EMSCRIPTEN_FLAGS)
