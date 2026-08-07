@@ -98,10 +98,6 @@ void miningThread(
     MiningThreadData* data
 );
 
-void startMiningWorkers();
-
-void stopMiningWorkers();
-
 void processNewJob(
     const picojson::object& jobObj
 );
