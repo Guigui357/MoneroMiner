@@ -155,7 +155,7 @@ namespace PoolClient {
         
         ws_attrs.url = proxy_url;
         ws_attrs.protocols = NULL;
-        ws_attrs.createOnMainThread = EM_FALSE;
+        ws_attrs.createOnMainThread = EM_TRUE;
 
         Utils::threadSafePrint(
             std::string("thread=") +
