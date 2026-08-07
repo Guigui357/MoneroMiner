@@ -95,12 +95,27 @@ namespace PoolClient {
 
     EM_BOOL on_ws_open(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData) {
         (void)eventType; (void)websocketEvent; (void)userData;
+
+        Utils::threadSafePrint("[WASM] OPEN CALLBACK EXECUTADO", true);
         
         PoolClient::poolSocket = 1; 
         Utils::threadSafePrint("[WASM] -> SUCESSO: WebSocket conectado e pronto para tráfego!", true);
         
         // CORREÇÃO CRÍTICA: Dispara a autenticação somente agora que o canal está de fato pronto
-        PoolClient::login(config.walletAddress, config.password, config.workerName, config.userAgent);
+        bool result = PoolClient::login(
+            config.walletAddress,
+            config.password,
+            config.workerName,
+            config.userAgent
+        );
+
+        Utils::threadSafePrint(
+            result ?
+            "[WASM] Login enviado OK" :
+            "[WASM] Falha ao enviar login",
+            true
+        );        
+        
         return EM_TRUE;
     }
 
