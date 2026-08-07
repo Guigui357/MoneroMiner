@@ -10,6 +10,7 @@
  
 #include "Config.h"
 #include "PoolClient.h"
+#include "MiningThreadData.h"
 #include "RandomXManager.h"
 #include "MiningStats.h"
 #include "Utils.h"
