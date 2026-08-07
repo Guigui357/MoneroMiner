@@ -154,7 +154,7 @@ namespace PoolClient {
         
         ws_attrs.url = proxy_url;
         ws_attrs.protocols = NULL;
-        ws_attrs.createOnMainThread = EM_TRUE;
+        ws_attrs.createOnMainThread = EM_FALSE;
 
         wsHandle = emscripten_websocket_new(&ws_attrs);
         Utils::threadSafePrint(
