@@ -6,6 +6,7 @@
 #include "MiningThreadData.h"
 #include "Job.h"
 #include "Config.h"
+#include "MiningStats.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -14,56 +15,27 @@
 #include <mutex>
 #include <queue>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "picojson.h"
 
 // ============================================================
-// Plataforma
-// ============================================================
-
-#ifdef __EMSCRIPTEN__
-
-#include <emscripten.h>
-#include <emscripten/websocket.h>
-
-using MinerSocket = EMSCRIPTEN_WEBSOCKET_T;
-
-#else
-
-#ifdef _WIN32
-#include <winsock2.h>
-using MinerSocket = SOCKET;
-#else
-#include <sys/socket.h>
-using MinerSocket = int;
-#endif
-
-#endif
-
-
-// ============================================================
-// Globais do minerador
+// Jobs
 // ============================================================
 
 extern std::mutex jobMutex;
-
 extern std::queue<Job> jobQueue;
 
 extern std::condition_variable jobAvailable;
 extern std::condition_variable jobQueueCV;
 
 extern std::atomic<bool> shouldStop;
-
 extern std::atomic<bool> newJobAvailable;
-
 extern std::atomic<bool> showedInitMessage;
 
-extern std::atomic<bool> workersStarted;
-
-
 // ============================================================
-// Estado do Job atual
+// Job atual
 // ============================================================
 
 extern std::mutex currentJobMutex;
@@ -76,73 +48,48 @@ extern std::string currentSeedHash;
 extern std::atomic<uint32_t> activeJobId;
 extern std::atomic<uint32_t> notifiedJobId;
 
-
 // ============================================================
-// Estatísticas
+// Hashes
 // ============================================================
 
 extern std::atomic<uint64_t> totalHashes;
-extern std::atomic<uint64_t> acceptedShares;
-extern std::atomic<uint64_t> rejectedShares;
-
 extern std::atomic<uint32_t> debugHashCounter;
 
-
 // ============================================================
-// Sessão / JSON-RPC
+// Sessão
 // ============================================================
 
 extern std::atomic<uint64_t> jsonRpcId;
-
 extern std::string sessionId;
 
+// ============================================================
+// Workers
+// ============================================================
 
-// ============================================================
-// Threads de mineração
-// ============================================================
+extern std::atomic<bool> workersStarted;
 
 extern std::vector<MiningThreadData*> threadData;
-
 extern std::vector<std::thread> miningThreads;
 
-
 // ============================================================
-// Controle de estatísticas Web
+// Stats Web
 // ============================================================
 
 extern std::thread statsWebThread;
-
 extern std::atomic<bool> statsThreadRunning;
 
-
 // ============================================================
-// Configuração
-// ============================================================
-
-extern Config config;
-
-
-// ============================================================
-// Estatísticas globais
-// ============================================================
-
-extern GlobalStats globalStats;
-
-
-// ============================================================
-// Mutexes de saída
+// Saída
 // ============================================================
 
 extern std::mutex consoleMutex;
 extern std::mutex logfileMutex;
-
 extern std::ofstream logFile;
 
 extern bool debugMode;
 
-
 // ============================================================
-// Funções principais do minerador
+// Funções
 // ============================================================
 
 void signalHandler(int signum);
@@ -151,51 +98,19 @@ void miningThread(
     MiningThreadData* data
 );
 
-
-// ============================================================
-// Workers
-// ============================================================
-//
-// IMPORTANTE:
-// Esta função deve ser chamada SOMENTE depois que o primeiro
-// Job válido for recebido.
-//
-// No WASM, não chame isso diretamente durante o callback de
-// criação do WebSocket antes do Job existir.
-//
-
 void startMiningWorkers();
 
-
-// Opcional: parada explícita dos workers
-
 void stopMiningWorkers();
-
-
-// ============================================================
-// Jobs
-// ============================================================
 
 void processNewJob(
     const picojson::object& jobObj
 );
 
-
-// Notifica todas as threads de mineração que existe um novo Job.
-
 void notifyNewJob();
-
-
-// Obtém o Job atual com segurança.
 
 bool getCurrentJob(
     Job& outJob
 );
-
-
-// ============================================================
-// Pool / comunicação
-// ============================================================
 
 bool submitShare(
     const std::string& jobId,
@@ -203,11 +118,6 @@ bool submitShare(
     const std::string& hash,
     const std::string& algo
 );
-
-
-// ============================================================
-// Respostas da pool
-// ============================================================
 
 void handleLoginResponse(
     const std::string& response
@@ -218,11 +128,6 @@ void handleShareResponse(
     bool& accepted
 );
 
-
-// ============================================================
-// JSON-RPC
-// ============================================================
-
 std::string createSubmitPayload(
     const std::string& sessionId,
     const std::string& jobId,
@@ -230,11 +135,6 @@ std::string createSubmitPayload(
     const std::string& hashHex,
     const std::string& algo
 );
-
-
-// ============================================================
-// Stats
-// ============================================================
 
 void updateThreadStats(
     MiningThreadData* data,
@@ -249,11 +149,6 @@ void globalStatsMonitor();
 
 void webStatsMonitorLoop();
 
-
-// ============================================================
-// Configuração / CLI
-// ============================================================
-
 bool loadConfig();
 
 bool validateConfig();
@@ -267,9 +162,8 @@ void printHelp();
 
 void printConfig();
 
-
 // ============================================================
-// WASM API
+// WASM
 // ============================================================
 
 #ifdef __EMSCRIPTEN__
