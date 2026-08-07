@@ -5,6 +5,7 @@
 #include "Globals.h"
 #include "Job.h"
 #include "Difficulty.h"
+#include "MoneroMiner.h"
 
 #include <iostream>
 #include <sstream>
