@@ -59,4 +59,5 @@ void updateThreadStats(MiningThreadData* data, uint64_t hashCount, uint64_t tota
                       int elapsedSeconds, const std::string& jobId, uint32_t currentNonce);
 void globalStatsMonitor();
 bool parseCommandLine(int argc, char* argv[]);
-void printHelp(); 
+void printHelp();
+void startMiningWorkers();
