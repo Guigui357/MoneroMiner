@@ -375,7 +375,30 @@ bool connect()
 
 }
 
+bool sendData(const std::string& data)
+{
+    std::lock_guard<std::mutex> lock(socketMutex);
 
+#ifdef __EMSCRIPTEN__
+
+    if (poolSocket == 0) {
+        Utils::threadSafePrint("[WS] Socket não conectado", true);
+        return false;
+    }
+
+    EmscriptenWebSocketSendText(
+        poolSocket,
+        data.c_str()
+    );
+
+    return true;
+
+#else
+
+    return false;
+
+#endif
+}
 
 // ==================================================
 // Login
