@@ -797,78 +797,57 @@ void webStatsMonitorLoop() {
 
 extern "C" {
 
-    bool startMining(const char* customWallet, const char* customWorker) {
-        if (customWallet != nullptr && std::strlen(customWallet) > 0) {
-            config.walletAddress = std::string(customWallet);
-        }
-        if (customWorker != nullptr && std::strlen(customWorker) > 0) {
-            config.workerName = std::string(customWorker);
-        }
-
-        if (!PoolClient::initialize()) {
-            Utils::threadSafePrint("[WASM] Falha logica ao inicializar PoolClient.", true);
-            return false;
-        }
-        
-        if (!PoolClient::connect()) {
-            Utils::threadSafePrint("[WASM] Erro: Nao foi possivel disparar a abertura do WebSocket.", true);
-            return false;
-        }
-        
-        Utils::threadSafePrint("[WASM] Canal de rede assincrono inicializado. Aguardando autenticacao e Job inicial...", true);
-        {
-            std::unique_lock<std::mutex> lock(PoolClient::jobMutex);
-            PoolClient::jobAvailable.wait_for(lock, std::chrono::seconds(15), 
-                [] { return !PoolClient::jobQueue.empty() || shouldStop; });
-        }
-
-        if (shouldStop || PoolClient::jobQueue.empty()) {
-            Utils::threadSafePrint("[WASM] Timeout ou interrupcao: Nenhum Job recebido da pool a tempo. Abortando.", true);
-            PoolClient::cleanup();
-            return false;
-        }
-        
-        Job* currentJob = nullptr;
-        {
-            std::lock_guard<std::mutex> lock(PoolClient::jobMutex);
-            if (!PoolClient::jobQueue.empty()) {
-                currentJob = &PoolClient::jobQueue.front();
-            }
-        }
-
-        if (!currentJob) {
-            Utils::threadSafePrint("[WASM] Erro interno: Fila de Jobs vazia apos liberacao da trava.", true);
-            return false;
-        }
-
-        if (!RandomXManager::initialize(currentJob->seedHash)) {
-            Utils::threadSafePrint("[WASM] Falha critica ao inicializar a gerencia do RandomX.", true);
-            return false;
-        }
-
-        threadData.resize(static_cast<size_t>(config.numThreads));
-        for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-            threadData[i] = new MiningThreadData(static_cast<int>(i));
-            if (!threadData[i]->initializeVM()) {
-                Utils::threadSafePrint("[WASM] Falha ao alocar VM para a thread worker " + std::to_string(i), true);
-                return false;
-            }
-        }
-        
-        Utils::threadSafePrint("[WASM] Sucesso: " + std::to_string(config.numThreads) + " threads de trabalho prontas.", true);
-        
-        for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-            miningThreads.push_back(std::thread([i]() { miningThread(threadData[i]); }));
-        }
-        
-        if (!statsThreadRunning) {
-            statsWebThread = std::thread(webStatsMonitorLoop);
-        }
-        
-        Utils::threadSafePrint("[WASM] === MINERACAO INICIALIZADA E EXECUTANDO EM SEGUNDO PLANO ===", true);
-        return true;
+bool startMining(
+    const char* customWallet,
+    const char* customWorker
+) {
+    if (customWallet != nullptr &&
+        std::strlen(customWallet) > 0)
+    {
+        config.walletAddress = customWallet;
     }
 
+    if (customWorker != nullptr &&
+        std::strlen(customWorker) > 0)
+    {
+        config.workerName = customWorker;
+    }
+
+    Utils::threadSafePrint(
+        "[WASM] startMining() iniciado",
+        true
+    );
+
+    if (!PoolClient::initialize())
+    {
+        Utils::threadSafePrint(
+            "[WASM] Falha ao inicializar PoolClient",
+            true
+        );
+
+        return false;
+    }
+
+    if (!PoolClient::connect())
+    {
+        Utils::threadSafePrint(
+            "[WASM] Falha ao criar WebSocket",
+            true
+        );
+
+        return false;
+    }
+
+    Utils::threadSafePrint(
+        "[WASM] WebSocket iniciado. Aguardando eventos...",
+        true
+    );
+
+    // NÃO esperar Job aqui.
+    // O WebSocket é assíncrono.
+
+    return true;
+}
     bool stopMining() {
         Utils::threadSafePrint("[WASM] Finalizando o motor de mineração a pedido da interface...", true);
         
