@@ -99,7 +99,7 @@ namespace PoolClient {
 
         Utils::threadSafePrint("[WASM] OPEN CALLBACK EXECUTADO", true);
         
-        PoolClient::poolSocket = 1; 
+        PoolClient::poolSocket = 0;
         Utils::threadSafePrint("[WASM] -> SUCESSO: WebSocket conectado e pronto para tráfego!", true);
         
         // CORREÇÃO CRÍTICA: Dispara a autenticação somente agora que o canal está de fato pronto
