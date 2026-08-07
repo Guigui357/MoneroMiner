@@ -38,7 +38,7 @@ jobs:
     # 5. Roda o comando Make usando o seu Makefile reestruturado para WebAssembly
     - name: Compile Project via Makefile
       run: |
-        make clean
+        make distclean
         make -j$(nproc) 
         
 
