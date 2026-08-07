@@ -175,9 +175,7 @@ std::string receiveData(
 );
 
 
-std::string sendData(
-    const std::string& data
-);
+bool sendData(const std::string& data);
 
 #endif
 
