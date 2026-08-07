@@ -478,7 +478,7 @@ void processNewJob(
     const picojson::object& jobObj
 )
 {
-    (void)jobObj
+    (void)jobObj;
 
 }
 
