@@ -307,7 +307,7 @@ bool connect()
 
     attr.protocols = nullptr;
 
-    attr.createOnMainThread = EM_TRUE;
+    attr.createOnMainThread = EM_FALSE;
 
 
 
