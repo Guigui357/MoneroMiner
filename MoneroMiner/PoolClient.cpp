@@ -219,15 +219,34 @@ EM_BOOL on_ws_close(
 )
 {
     (void)eventType;
-    (void)event;
     (void)userData;
 
-
     Utils::threadSafePrint(
-        "[WASM] WebSocket fechado",
+        "[WASM] *** WEBSOCKET FECHOU ***",
         true
     );
 
+    if (event)
+    {
+        Utils::threadSafePrint(
+            "[WASM] Close code: " +
+            std::to_string(event->code),
+            true
+        );
+
+        Utils::threadSafePrint(
+            "[WASM] Close reason: " +
+            std::string(event->reason),
+            true
+        );
+
+        Utils::threadSafePrint(
+            event->wasClean
+                ? "[WASM] Fechamento limpo"
+                : "[WASM] Fechamento NAO LIMPO",
+            true
+        );
+    }
 
     poolSocket = 0;
 
