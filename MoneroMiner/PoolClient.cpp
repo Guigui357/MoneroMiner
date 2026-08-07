@@ -382,14 +382,19 @@ bool sendData(const std::string& data)
 #ifdef __EMSCRIPTEN__
 
     if (poolSocket == 0) {
-        Utils::threadSafePrint("[WS] Socket não conectado", true);
+        Utils::threadSafePrint("[WS] Socket inválido", true);
         return false;
     }
 
-    EmscriptenWebSocketSendText(
+    int result = emscripten_websocket_send_utf8_text(
         poolSocket,
         data.c_str()
     );
+
+    if (result != EMSCRIPTEN_RESULT_SUCCESS) {
+        Utils::threadSafePrint("[WS] Falha ao enviar", true);
+        return false;
+    }
 
     return true;
 
