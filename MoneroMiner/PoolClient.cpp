@@ -155,7 +155,8 @@ namespace PoolClient {
         emscripten_websocket_set_onopen_callback(wsHandle, NULL, on_ws_open);
         emscripten_websocket_set_onmessage_callback(wsHandle, NULL, on_message_received);
         emscripten_websocket_set_onclose_callback(wsHandle, NULL, on_close_event);
-
+        emscripten_websocket_set_onerror_callback(wsHandle, NULL, on_error);
+        
         return true;
     }
 
