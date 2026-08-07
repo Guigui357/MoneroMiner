@@ -104,6 +104,18 @@ namespace PoolClient {
         return EM_TRUE;
     }
 
+    EM_BOOL on_error(int eventType,
+                     const EmscriptenWebSocketErrorEvent* event,
+                     void* userData)
+    {
+        (void)eventType;
+        (void)event;
+        (void)userData;
+
+        Utils::threadSafePrint("[WASM] ERRO no WebSocket!", true);
+        return EM_TRUE;
+    }
+
 
     // =========================================================================
     // IMPLEMENTAÇÃO DAS FUNÇÕES CORE DE REDE
@@ -130,6 +142,10 @@ namespace PoolClient {
         ws_attrs.createOnMainThread = EM_TRUE;
 
         wsHandle = emscripten_websocket_new(&ws_attrs);
+        Utils::threadSafePrint(
+            "[WASM] Handle: " + std::to_string((int)wsHandle),
+            true
+        );
         if (wsHandle <= 0) {
             Utils::threadSafePrint("[WASM] Falha ao instanciar ponte de controle WebSocket.", true);
             return false;
