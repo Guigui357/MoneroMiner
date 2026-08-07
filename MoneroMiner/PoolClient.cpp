@@ -61,6 +61,7 @@ std::string sessionId;
 std::string currentTargetHex;
 std::string poolId;
 
+extern void startMiningWorkers();
 
 // ==================================================
 // Initialize
@@ -717,131 +718,206 @@ void cleanup()
 
 }
 
-void processNewJob(
-    const picojson::object& jobObj
-)
+void processNewJob(const picojson::object& jobObj)
 {
     try
     {
+        // ==================================================
+        // EXTRAI OS DADOS DO JOB
+        // ==================================================
+
         std::string blob;
         std::string jobId;
         std::string target;
-        std::string seed;
+        std::string seedHash;
         uint64_t height = 0;
 
-
-        if(jobObj.find("blob") != jobObj.end())
-        {
-            blob =
-                jobObj.at("blob")
-                .get<std::string>();
-        }
-
-
-        if(jobObj.find("job_id") != jobObj.end())
-        {
-            jobId =
-                jobObj.at("job_id")
-                .get<std::string>();
-        }
-
-
-        if(jobObj.find("target") != jobObj.end())
-        {
-            target =
-                jobObj.at("target")
-                .get<std::string>();
-        }
-
-
-        if(jobObj.find("seed_hash") != jobObj.end())
-        {
-            seed =
-                jobObj.at("seed_hash")
-                .get<std::string>();
-        }
-
-
-        if(jobObj.find("height") != jobObj.end())
-        {
-            height =
-                static_cast<uint64_t>(
-                    jobObj.at("height")
-                    .get<double>()
-                );
-        }
-
-
-
-        if(blob.empty() || jobId.empty())
+        // blob
+        auto blobIt = jobObj.find("blob");
+        if (blobIt == jobObj.end() ||
+            !blobIt->second.is<std::string>())
         {
             Utils::threadSafePrint(
-                "[WASM] JOB inválido",
+                "[WASM] JOB invalido: blob ausente",
                 true
             );
-
             return;
         }
 
+        blob = blobIt->second.get<std::string>();
 
+        // job_id
+        auto jobIdIt = jobObj.find("job_id");
+        if (jobIdIt == jobObj.end() ||
+            !jobIdIt->second.is<std::string>())
+        {
+            Utils::threadSafePrint(
+                "[WASM] JOB invalido: job_id ausente",
+                true
+            );
+            return;
+        }
+
+        jobId = jobIdIt->second.get<std::string>();
+
+        // target
+        auto targetIt = jobObj.find("target");
+        if (targetIt != jobObj.end() &&
+            targetIt->second.is<std::string>())
+        {
+            target = targetIt->second.get<std::string>();
+        }
+
+        // seed_hash
+        auto seedIt = jobObj.find("seed_hash");
+        if (seedIt != jobObj.end() &&
+            seedIt->second.is<std::string>())
+        {
+            seedHash = seedIt->second.get<std::string>();
+        }
+
+        // height
+        auto heightIt = jobObj.find("height");
+        if (heightIt != jobObj.end() &&
+            heightIt->second.is<double>())
+        {
+            height = static_cast<uint64_t>(
+                heightIt->second.get<double>()
+            );
+        }
+
+        // ==================================================
+        // VALIDAÇÃO
+        // ==================================================
+
+        if (blob.empty())
+        {
+            Utils::threadSafePrint(
+                "[WASM] JOB invalido: blob vazio",
+                true
+            );
+            return;
+        }
+
+        if (jobId.empty())
+        {
+            Utils::threadSafePrint(
+                "[WASM] JOB invalido: job_id vazio",
+                true
+            );
+            return;
+        }
+
+        if (target.empty())
+        {
+            Utils::threadSafePrint(
+                "[WASM] JOB invalido: target vazio",
+                true
+            );
+            return;
+        }
+
+        if (seedHash.empty())
+        {
+            Utils::threadSafePrint(
+                "[WASM] JOB invalido: seed_hash vazio",
+                true
+            );
+            return;
+        }
+
+        // ==================================================
+        // CRIA O OBJETO JOB
+        // ==================================================
 
         Job job(
             blob,
             jobId,
             target,
             height,
-            seed
+            seedHash
         );
 
-
+        // ==================================================
+        // COLOCA O JOB NA FILA
+        // ==================================================
 
         {
-            std::lock_guard<std::mutex> lock(
-                jobMutex
-            );
+            std::lock_guard<std::mutex> lock(jobMutex);
 
-
-            while(!jobQueue.empty())
+            // O Job antigo fica inválido.
+            while (!jobQueue.empty())
                 jobQueue.pop();
-
 
             jobQueue.push(job);
         }
 
+        // ==================================================
+        // ATUALIZA ESTADO DA POOL
+        // ==================================================
 
+        currentSeedHash = seedHash;
+        currentTargetHex = target;
+
+        // ==================================================
+        // ACORDA THREADS ESPERANDO POR JOB
+        // ==================================================
 
         jobAvailable.notify_all();
+        jobQueueCondition.notify_all();
 
-
+        // ==================================================
+        // LOG
+        // ==================================================
 
         Utils::threadSafePrint(
-            "[WASM] Novo JOB: "
-            + jobId
-            +
-            " Height: "
-            +
-            std::to_string(height),
+            "[WASM] Novo JOB recebido: " +
+            jobId +
+            " | Height: " +
+            std::to_string(height) +
+            " | Target: " +
+            target,
             true
         );
 
+        // ==================================================
+        // INICIA OS WORKERS NO PRIMEIRO JOB
+        // ==================================================
 
+        static std::atomic<bool> workersStarted(false);
 
+        if (!workersStarted.exchange(true))
+        {
+            Utils::threadSafePrint(
+                "[WASM] Primeiro Job recebido. "
+                "Iniciando startMiningWorkers()...",
+                true
+            );
+
+            startMiningWorkers();
+
+            Utils::threadSafePrint(
+                "[WASM] startMiningWorkers() concluido.",
+                true
+            );
+        }
     }
-    catch(const std::exception& e)
+    catch (const std::exception& e)
     {
-
         Utils::threadSafePrint(
-            std::string(
-                "[WASM] Erro criando JOB: "
-            )
-            +
+            std::string("[WASM] Erro criando JOB: ") +
             e.what(),
             true
         );
-
+    }
+    catch (...)
+    {
+        Utils::threadSafePrint(
+            "[WASM] Erro desconhecido criando JOB",
+            true
+        );
     }
 }
-
 
 
 }
