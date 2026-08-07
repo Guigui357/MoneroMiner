@@ -13,6 +13,7 @@
 #include "MiningThreadData.h"
 #include "RandomXManager.h"
 #include "MiningStats.h"
+#include "MoneroMiner.h"
 #include "Utils.h"
 #include "Job.h"
 #include "Globals.h"
