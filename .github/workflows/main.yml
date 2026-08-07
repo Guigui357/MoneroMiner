@@ -28,9 +28,6 @@ jobs:
       uses: mymindstorm/setup-emsdk@v14
       with:
         version: '3.1.50'
-        # Altere o nome da chave ou adicione um sufixo para invalidar o cache antigo
-        actions-cache-key: 'emsdk-v2-cache' 
-
 
     # 4. Executa a checagem das versões para garantir que o emcc está ativo
     - name: Verify Emscripten Installation
