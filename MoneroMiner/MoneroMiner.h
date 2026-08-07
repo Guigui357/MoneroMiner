@@ -6,8 +6,6 @@
 #include "MiningThreadData.h"
 #include "Job.h"
 #include "Config.h"
-#include <WinSock2.h>
-#include <WS2tcpip.h>
 #include <queue>
 #include <atomic>
 #include <mutex>
