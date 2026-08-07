@@ -1,13 +1,30 @@
-#include "Config.h"
 #include "PoolClient.h"
-#include "RandomXManager.h"
-#include "MiningStats.h"
-#include "MiningThreadData.h"
-#include "Job.h"
-#include "Globals.h"
-#include "Platform.h"
 
+#include "Utils.h"
+#include "Config.h"
+#include "Globals.h"
+#include "Job.h"
+#include "Difficulty.h"
+
+#include <iostream>
 #include <sstream>
+#include <string>
+#include <cstring>
+#include <vector>
+#include <mutex>
+#include <queue>
+#include <thread>
+#include <chrono>
+
+#ifdef EMSCRIPTEN
+#include <emscripten.h>
+#include <emscripten/websocket.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#endif
 
 
 namespace PoolClient {
