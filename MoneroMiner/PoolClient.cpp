@@ -158,7 +158,7 @@ namespace PoolClient {
         ws_attrs.createOnMainThread = EM_FALSE;
 
         Utils::threadSafePrint(
-            std::string("thread=") 
+            std::string("thread=") +
             (emscripten_is_main_browser_thread() ? "MAIN" : "WORKER"),
             true
         );
