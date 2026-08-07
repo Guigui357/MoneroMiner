@@ -24,13 +24,6 @@
 // Jobs
 // ============================================================
 
-extern std::mutex jobMutex;
-extern std::queue<Job> jobQueue;
-
-extern std::condition_variable jobAvailable;
-extern std::condition_variable jobQueueCV;
-
-extern std::atomic<bool> shouldStop;
 extern std::atomic<bool> newJobAvailable;
 extern std::atomic<bool> showedInitMessage;
 
@@ -66,8 +59,6 @@ extern std::string sessionId;
 // Workers
 // ============================================================
 
-extern std::atomic<bool> workersStarted;
-
 extern std::vector<MiningThreadData*> threadData;
 extern std::vector<std::thread> miningThreads;
 
@@ -97,6 +88,9 @@ void signalHandler(int signum);
 void miningThread(
     MiningThreadData* data
 );
+
+void startMiningWorkers();
+void stopMiningWorkers();
 
 void processNewJob(
     const picojson::object& jobObj
