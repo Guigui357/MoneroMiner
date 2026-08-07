@@ -24,14 +24,13 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y cmake build-essential
 
-    # 3. Configura o Emscripten SDK oficial na máquina do GitHub Actions
-    - name: Setup Emscripten toolchain
+    - name: Setup Emscripten
       uses: mymindstorm/setup-emsdk@v14
       with:
-        # Define a versão estável do compilador emcc
-        version: 3.1.64
-        # Ativa as variáveis de ambiente automaticamente para os passos seguintes
-        actions-cache-folder: 'emsdk-cache'
+        version: '3.1.50'
+        # Altere o nome da chave ou adicione um sufixo para invalidar o cache antigo
+        actions-cache-key: 'emsdk-v2-cache' 
+
 
     # 4. Executa a checagem das versões para garantir que o emcc está ativo
     - name: Verify Emscripten Installation
