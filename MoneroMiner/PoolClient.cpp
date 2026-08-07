@@ -14,6 +14,7 @@
 
 // Biblioteca nativa do Emscripten para controle do WebSocket do Navegador
 #include <emscripten/websocket.h>
+#include <emscripten/threading.h>
 
 using namespace picojson;
 
@@ -157,7 +158,8 @@ namespace PoolClient {
         ws_attrs.createOnMainThread = EM_FALSE;
 
         Utils::threadSafePrint(
-            "pthread=" + std::to_string(emscripten_is_main_runtime_thread()),
+            std::string("thread=") 
+            (emscripten_is_main_browser_thread() ? "MAIN" : "WORKER"),
             true
         );
         
