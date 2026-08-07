@@ -52,81 +52,272 @@ std::vector<uint8_t> RandomXManager::lastHash;
 double RandomXManager::currentDifficulty = 0.0;
 uint256_t RandomXManager::expandedTarget;
 
-bool RandomXManager::initializeCache(const std::string& seedHash) {
-    std::lock_guard<std::mutex> lock(cacheMutex);
-    
-    if (cache != nullptr) {
-        if (currentSeedHash == seedHash) {
-            return true;
+bool RandomXManager::initializeCache(const std::string& seedHash)
+{
+    std::lock_guard<std::mutex> lock(randomXMutex);
+
+    Utils::threadSafePrint(
+        "[RandomX] Inicializando cache...",
+        true
+    );
+
+    // --------------------------------------------------
+    // Validar seed
+    // --------------------------------------------------
+
+    if (seedHash.empty())
+    {
+        Utils::threadSafePrint(
+            "[RandomX] ERRO: seed hash vazio",
+            true
+        );
+
+        return false;
+    }
+
+    if (seedHash.size() != 64)
+    {
+        Utils::threadSafePrint(
+            "[RandomX] ERRO: seed hash deve possuir 64 caracteres hex",
+            true
+        );
+
+        return false;
+    }
+
+    // --------------------------------------------------
+    // Converter seed hexadecimal -> bytes
+    // --------------------------------------------------
+
+    std::vector<uint8_t> seedBytes;
+
+    try
+    {
+        seedBytes.reserve(32);
+
+        for (size_t i = 0; i < seedHash.size(); i += 2)
+        {
+            unsigned int byteValue = 0;
+
+            std::stringstream ss;
+
+            ss << std::hex
+               << seedHash.substr(i, 2);
+
+            ss >> byteValue;
+
+            seedBytes.push_back(
+                static_cast<uint8_t>(byteValue)
+            );
         }
+    }
+    catch (const std::exception& e)
+    {
+        Utils::threadSafePrint(
+            std::string("[RandomX] ERRO convertendo seed: ")
+            + e.what(),
+            true
+        );
+
+        return false;
+    }
+
+    if (seedBytes.size() != 32)
+    {
+        Utils::threadSafePrint(
+            "[RandomX] ERRO: seed possui tamanho inválido",
+            true
+        );
+
+        return false;
+    }
+
+    // --------------------------------------------------
+    // Detectar flags disponíveis
+    // --------------------------------------------------
+
+    int detectedFlags = randomx_get_flags();
+
+    Utils::threadSafePrint(
+        "[RandomX] CPU flags detectadas: 0x"
+        +
+        Utils::formatHex(
+            static_cast<uint64_t>(detectedFlags),
+            8
+        ),
+        true
+    );
+
+    // --------------------------------------------------
+    // WASM
+    // --------------------------------------------------
+
+#ifdef __EMSCRIPTEN__
+
+    /*
+     * IMPORTANTÍSSIMO:
+     *
+     * No navegador não queremos:
+     *
+     * RANDOMX_FLAG_FULL_MEM
+     * RANDOMX_FLAG_LARGE_PAGES
+     *
+     * FULL_MEM exige o dataset enorme do RandomX.
+     *
+     * Para o WASM usamos LIGHT MODE:
+     *
+     *     Cache
+     *       ↓
+     *     VM
+     *       ↓
+     *     RandomX
+     */
+
+    useLightMode = true;
+
+    flags =
+        detectedFlags |
+        RANDOMX_FLAG_JIT;
+
+    flags &=
+        ~RANDOMX_FLAG_FULL_MEM;
+
+    flags &=
+        ~RANDOMX_FLAG_LARGE_PAGES;
+
+    cacheAllocFlags =
+        detectedFlags |
+        RANDOMX_FLAG_JIT;
+
+    cacheAllocFlags &=
+        ~RANDOMX_FLAG_FULL_MEM;
+
+    cacheAllocFlags &=
+        ~RANDOMX_FLAG_LARGE_PAGES;
+
+    Utils::threadSafePrint(
+        "[WASM] RandomX: LIGHT MODE",
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] RandomX: dataset FULL_MEM desativado",
+        true
+    );
+
+#else
+
+    // --------------------------------------------------
+    // Desktop
+    // --------------------------------------------------
+
+    useLightMode = false;
+
+    cacheAllocFlags =
+        detectedFlags &
+        ~RANDOMX_FLAG_FULL_MEM;
+
+    flags =
+        detectedFlags |
+        RANDOMX_FLAG_FULL_MEM;
+
+    flags |= RANDOMX_FLAG_JIT;
+
+    cacheAllocFlags |= RANDOMX_FLAG_JIT;
+
+    if (Platform::hasHugePagesSupport())
+    {
+        flags |= RANDOMX_FLAG_LARGE_PAGES;
+        cacheAllocFlags |= RANDOMX_FLAG_LARGE_PAGES;
+
+        Utils::threadSafePrint(
+            "[RandomX] Large pages habilitadas",
+            true
+        );
+    }
+    else
+    {
+        Utils::threadSafePrint(
+            "[RandomX] Large pages indisponíveis",
+            true
+        );
+    }
+
+#endif
+
+    // --------------------------------------------------
+    // Liberar cache anterior
+    // --------------------------------------------------
+
+    if (cache != nullptr)
+    {
+        Utils::threadSafePrint(
+            "[RandomX] Liberando cache anterior...",
+            true
+        );
+
         randomx_release_cache(cache);
+
         cache = nullptr;
     }
 
-    // Get base flags from RandomX
-    int detectedFlags = randomx_get_flags();
-    Utils::threadSafePrint("Detected CPU flags: 0x" + Utils::formatHex(static_cast<uint64_t>(detectedFlags), 8), true);
-    
-    // Build cache flags (everything except FULL_MEM)
-    cacheAllocFlags = detectedFlags & ~RANDOMX_FLAG_FULL_MEM;
-    
-    // Build VM/dataset flags (add FULL_MEM for 2GB dataset mode)
-    flags = detectedFlags | RANDOMX_FLAG_FULL_MEM;
-    
-    // Ensure JIT is explicitly enabled (it should be in detectedFlags, but be explicit)
-    flags |= RANDOMX_FLAG_JIT;
-    cacheAllocFlags |= RANDOMX_FLAG_JIT;
-    
-    // Add large pages flag if available
-    if (Platform::hasHugePagesSupport()) {
-        cacheAllocFlags |= RANDOMX_FLAG_LARGE_PAGES;
-        flags |= RANDOMX_FLAG_LARGE_PAGES;
-        Utils::threadSafePrint("Large pages enabled in RandomX", true);
-    } else {
-        Utils::threadSafePrint("Large pages not available - using normal pages", true);
-    }
-    
-    useLightMode = false;
-    
-    // Log what we're actually using
-    Utils::threadSafePrint("Mode: FULL (2GB dataset)", true);
-    Utils::threadSafePrint("Cache flags: 0x" + Utils::formatHex(static_cast<uint64_t>(cacheAllocFlags), 8), true);
-    Utils::threadSafePrint("VM/Dataset flags: 0x" + Utils::formatHex(static_cast<uint64_t>(flags), 8), true);
-    
-    // Decode and show what flags mean
-    if (config.debugMode) {
-        std::stringstream ss;
-        ss << "Active flags: ";
-        if (flags & RANDOMX_FLAG_JIT) ss << "JIT ";
-        if (flags & RANDOMX_FLAG_HARD_AES) ss << "AES ";
-        if (flags & RANDOMX_FLAG_FULL_MEM) ss << "FULL_MEM ";
-        if (flags & RANDOMX_FLAG_LARGE_PAGES) ss << "LARGE_PAGES ";
-        if (flags & RANDOMX_FLAG_SECURE) ss << "SECURE ";
-        Utils::threadSafePrint(ss.str(), true);
-    }
-    
-    cache = randomx_alloc_cache(static_cast<randomx_flags>(cacheAllocFlags));
-    if (!cache) {
-        Utils::threadSafePrint("Cache allocation failed with current flags, trying fallback", true);
-        // Try without large pages
-        cacheAllocFlags &= ~RANDOMX_FLAG_LARGE_PAGES;
-        flags &= ~RANDOMX_FLAG_LARGE_PAGES;
-        cache = randomx_alloc_cache(static_cast<randomx_flags>(cacheAllocFlags));
-        if (!cache) {
-            Utils::threadSafePrint("Cache allocation failed completely", true);
-            return false;
-        }
-    }
+    // --------------------------------------------------
+    // Alocar cache
+    // --------------------------------------------------
 
-    std::vector<uint8_t> seedBytes = Utils::hexToBytes(seedHash);
-    if (seedBytes.size() != 32) {
-        Utils::threadSafePrint("ERROR: Invalid seed hash length: " + std::to_string(seedBytes.size()), true);
+    Utils::threadSafePrint(
+        "[RandomX] Alocando RandomX cache...",
+        true
+    );
+
+    cache =
+        randomx_alloc_cache(
+            static_cast<randomx_flags>(
+                cacheAllocFlags
+            )
+        );
+
+    if (cache == nullptr)
+    {
+        Utils::threadSafePrint(
+            "[RandomX] ERRO: randomx_alloc_cache() falhou",
+            true
+        );
+
         return false;
     }
-    
-    randomx_init_cache(cache, seedBytes.data(), seedBytes.size());
-    Utils::threadSafePrint("Cache initialized with seed hash: " + seedHash.substr(0, 16) + "...", true);
+
+    Utils::threadSafePrint(
+        "[RandomX] Cache alocado",
+        true
+    );
+
+    // --------------------------------------------------
+    // Inicializar cache com seed
+    // --------------------------------------------------
+
+    Utils::threadSafePrint(
+        "[RandomX] Inicializando cache com seed...",
+        true
+    );
+
+    randomx_init_cache(
+        cache,
+        seedBytes.data(),
+        seedBytes.size()
+    );
+
+    Utils::threadSafePrint(
+        "[RandomX] Cache RandomX inicializado",
+        true
+    );
+
+    // --------------------------------------------------
+    // Guardar seed atual
+    // --------------------------------------------------
+
     currentSeedHash = seedHash;
+
     return true;
 }
 
