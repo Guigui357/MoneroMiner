@@ -433,50 +433,124 @@ bool RandomXManager::initialize(const std::string& seedHash) {
     return true;
 }
 
-bool RandomXManager::createVM(int threadId) {
+bool RandomXManager::createVM(int threadId)
+{
     std::unique_lock<std::shared_mutex> lock(vmMutex);
-    
-    if (!initialized || !cache) {
-        Utils::threadSafePrint("Cannot create VM: RandomX not initialized", true);
+
+    if (!initialized || cache == nullptr)
+    {
+        Utils::threadSafePrint(
+            "[WASM] ERRO: RandomX não está inicializado ou cache == nullptr",
+            true
+        );
         return false;
     }
-    
-    if (!useLightMode && !dataset) {
-        Utils::threadSafePrint("Cannot create VM: dataset required for full mode", true);
+
+#ifdef __EMSCRIPTEN__
+
+    // =========================================================
+    // WASM: SEM DATASET / LIGHT MODE
+    // =========================================================
+
+    randomx_flags wasmFlags =
+        static_cast<randomx_flags>(flags);
+
+    // Nunca permitir FULL_MEM/LARGE_PAGES no WASM
+    wasmFlags = static_cast<randomx_flags>(
+        wasmFlags &
+        ~RANDOMX_FLAG_FULL_MEM &
+        ~RANDOMX_FLAG_LARGE_PAGES
+    );
+
+    // JIT pode ser problemático dependendo da build do RandomX.
+    // Como seu teste atual está sem JIT, mantenha desligado.
+    wasmFlags = static_cast<randomx_flags>(
+        wasmFlags &
+        ~RANDOMX_FLAG_JIT
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] Criando VM LIGHT para thread " +
+        std::to_string(threadId),
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] VM flags: 0x" +
+        Utils::formatHex(
+            static_cast<uint64_t>(wasmFlags),
+            8
+        ),
+        true
+    );
+
+    randomx_vm* vm = randomx_create_vm(
+        wasmFlags,
+        cache,
+        nullptr
+    );
+
+    if (vm == nullptr)
+    {
+        Utils::threadSafePrint(
+            "[WASM] ERRO: randomx_create_vm() retornou nullptr",
+            true
+        );
+        return false;
+    }
+
+    vms[threadId] = vm;
+
+    Utils::threadSafePrint(
+        "[WASM] VM LIGHT criada com sucesso para thread " +
+        std::to_string(threadId),
+        true
+    );
+
+    return true;
+
+#else
+
+    // =========================================================
+    // DESKTOP: comportamento normal
+    // =========================================================
+
+    if (!useLightMode && dataset == nullptr)
+    {
+        Utils::threadSafePrint(
+            "Cannot create VM: dataset required for full mode",
+            true
+        );
         return false;
     }
 
     auto it = vms.find(threadId);
-    if (it != vms.end() && it->second != nullptr) {
+
+    if (it != vms.end() && it->second != nullptr)
+    {
         return true;
     }
 
-    // Only log in debug mode
-    if (config.debugMode) {
-        Utils::threadSafePrint("Creating VM for thread " + std::to_string(threadId), true);
-    }
-    
     randomx_vm* vm = randomx_create_vm(
-        static_cast<randomx_flags>(flags), 
-        cache, 
+        static_cast<randomx_flags>(flags),
+        cache,
         useLightMode ? nullptr : dataset
     );
-    
-    if (!vm) {
-        Utils::threadSafePrint("VM creation failed, trying fallback...", true);
-        int fallbackFlags = cacheAllocFlags & ~RANDOMX_FLAG_FULL_MEM;
-        vm = randomx_create_vm(static_cast<randomx_flags>(fallbackFlags), cache, nullptr);
-        if (!vm) {
-            Utils::threadSafePrint("VM creation failed completely", true);
-            return false;
-        }
+
+    if (vm == nullptr)
+    {
+        Utils::threadSafePrint(
+            "VM creation failed",
+            true
+        );
+        return false;
     }
 
     vms[threadId] = vm;
-    if (config.debugMode) {
-        Utils::threadSafePrint("VM created successfully for thread " + std::to_string(threadId), true);
-    }
+
     return true;
+
+#endif
 }
 
 bool RandomXManager::initializeVM(int threadId) {
