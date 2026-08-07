@@ -97,12 +97,15 @@ EM_BOOL on_ws_open(
     (void)event;
     (void)userData;
 
-
     Utils::threadSafePrint(
-        "[WASM] WebSocket conectado",
+        "[WASM] *** ONOPEN DISPAROU ***",
         true
     );
 
+    Utils::threadSafePrint(
+        "[WASM] Enviando LOGIN...",
+        true
+    );
 
     bool ok = login(
         config.walletAddress,
@@ -111,19 +114,15 @@ EM_BOOL on_ws_open(
         config.userAgent
     );
 
-
     Utils::threadSafePrint(
-        ok ?
-        "[WASM] Login enviado":
-        "[WASM] Falha enviando login",
+        ok
+            ? "[WASM] LOGIN ENVIADO"
+            : "[WASM] FALHA AO ENVIAR LOGIN",
         true
     );
 
-
     return EM_TRUE;
 }
-
-
 
 EM_BOOL on_ws_message(
     int eventType,
