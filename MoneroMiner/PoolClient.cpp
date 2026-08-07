@@ -536,18 +536,102 @@ void cleanup()
 
 }
 
-
-
-// ==================================================
-// Job placeholder
-// ==================================================
-
 void processNewJob(
     const picojson::object& jobObj
 )
 {
-    (void)jobObj;
+    try
+    {
+        Job job;
 
+
+        // Dados principais do job
+        if(jobObj.find("job_id") != jobObj.end())
+        {
+            job.jobId =
+                jobObj.at("job_id")
+                .get<std::string>();
+        }
+
+
+        if(jobObj.find("blob") != jobObj.end())
+        {
+            job.blob =
+                jobObj.at("blob")
+                .get<std::string>();
+        }
+
+
+        if(jobObj.find("height") != jobObj.end())
+        {
+            job.height =
+                static_cast<uint64_t>(
+                    jobObj.at("height")
+                    .get<double>()
+                );
+        }
+
+
+        if(jobObj.find("target") != jobObj.end())
+        {
+            job.target =
+                jobObj.at("target")
+                .get<std::string>();
+        }
+
+
+        if(jobObj.find("algo") != jobObj.end())
+        {
+            job.algo =
+                jobObj.at("algo")
+                .get<std::string>();
+        }
+
+
+
+        {
+            std::lock_guard<std::mutex> lock(
+                jobMutex
+            );
+
+
+            // remove job antigo
+            while(!jobQueue.empty())
+                jobQueue.pop();
+
+
+            jobQueue.push(job);
+        }
+
+
+
+        jobAvailable.notify_all();
+
+
+
+        Utils::threadSafePrint(
+            "[WASM] Novo JOB: "
+            + job.jobId
+            +
+            " altura "
+            +
+            std::to_string(job.height),
+            true
+        );
+
+
+    }
+    catch(const std::exception& e)
+    {
+
+        Utils::threadSafePrint(
+            std::string("[WASM] Erro processando JOB: ")
+            +
+            e.what(),
+            true
+        );
+
+    }
 }
 
 
