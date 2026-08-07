@@ -249,66 +249,6 @@ void printDetailedSystemInfo() {
 #endif
 }
 
-void startMiningWorkers()
-{
-    if (!miningThreads.empty())
-    {
-        return;
-    }
-
-    Utils::threadSafePrint(
-        "[WASM] Criando threads de mineração...",
-        true
-    );
-
-    threadData.resize(
-        static_cast<size_t>(config.numThreads)
-    );
-
-    for (int i = 0; i < config.numThreads; ++i)
-    {
-        threadData[i] =
-            new MiningThreadData(i);
-
-        if (!threadData[i]->initializeVM())
-        {
-            Utils::threadSafePrint(
-                "[WASM] Falha ao inicializar VM da thread " +
-                std::to_string(i),
-                true
-            );
-
-            continue;
-        }
-    }
-
-    for (int i = 0; i < config.numThreads; ++i)
-    {
-        if (threadData[i] == nullptr)
-            continue;
-
-        miningThreads.emplace_back(
-            [i]()
-            {
-                miningThread(threadData[i]);
-            }
-        );
-    }
-
-    Utils::threadSafePrint(
-        "[WASM] " +
-        std::to_string(miningThreads.size()) +
-        " workers iniciados.",
-        true
-    );
-
-    if (!statsThreadRunning)
-    {
-        statsWebThread =
-            std::thread(webStatsMonitorLoop);
-    }
-}
-
 void printHelp() {
     std::cout << "MoneroMiner - A RandomX (XMR) mining program\n\n"
               << "Usage: MoneroMiner [options]\n\n"
