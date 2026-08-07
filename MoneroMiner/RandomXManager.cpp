@@ -54,16 +54,10 @@ uint256_t RandomXManager::expandedTarget;
 
 bool RandomXManager::initializeCache(const std::string& seedHash)
 {
-    std::lock_guard<std::mutex> lock(randomXMutex);
-
     Utils::threadSafePrint(
         "[RandomX] Inicializando cache...",
         true
     );
-
-    // --------------------------------------------------
-    // Validar seed
-    // --------------------------------------------------
 
     if (seedHash.empty())
     {
