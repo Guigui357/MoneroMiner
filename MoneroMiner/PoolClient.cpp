@@ -260,7 +260,31 @@ EM_BOOL on_ws_error(
 
 #endif
 
+bool submitShare(
+    const std::string& jobId,
+    const std::string& nonceHex,
+    const std::string& hashHex,
+    const std::string& algo
+) {
+    picojson::object obj;
 
+    obj["id"] = picojson::value(jobId);
+    obj["nonce"] = picojson::value(nonceHex);
+    obj["hash"] = picojson::value(hashHex);
+    obj["algo"] = picojson::value(algo);
+
+    picojson::object root;
+    root["method"] = picojson::value("submit");
+    root["params"] = picojson::value(obj);
+
+    std::string payload = picojson::value(root).serialize();
+
+    std::lock_guard<std::mutex> lock(submitMutex);
+
+    std::string response = sendData(payload);
+
+    return !response.empty();
+}
 
 // ==================================================
 // Connect
