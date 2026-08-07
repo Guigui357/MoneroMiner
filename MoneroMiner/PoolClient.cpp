@@ -281,9 +281,7 @@ bool submitShare(
 
     std::lock_guard<std::mutex> lock(submitMutex);
 
-    std::string response = sendData(payload);
-
-    return !response.empty();
+    return sendData(payload);
 }
 
 // ==================================================
