@@ -18,7 +18,7 @@ EMSCRIPTEN_FLAGS = \
     -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','wasmMemory']" \
     -lwebsocket.js \
     -s SINGLE_FILE=1
-LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
+LDFLAGS = $(EMSCRIPTEN_FLAGS)
 
 # Directories
 SRC_DIR = MoneroMiner
