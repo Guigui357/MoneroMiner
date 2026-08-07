@@ -45,6 +45,7 @@ socket_t poolSocket = INVALID_SOCKET;
 
 #endif
 
+extern void startMiningWorkers();
 
 std::mutex jobMutex;
 std::mutex socketMutex;
