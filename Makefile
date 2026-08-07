@@ -15,8 +15,8 @@ EMSCRIPTEN_FLAGS = \
     -s SHARED_MEMORY=1 \
     -s ENVIRONMENT="web,worker" \
     -s EXPORTED_FUNCTIONS="['_startMining','_stopMining','_main']" \
-    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','wasmMemory']"
-    -lwebsockets.js
+    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','wasmMemory']" \
+    -lwebsockets.js \
     -s SINGLE_FILE=1
 LDFLAGS = -pthread $(EMSCRIPTEN_FLAGS)
 
