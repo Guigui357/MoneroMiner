@@ -133,78 +133,259 @@ EM_BOOL on_ws_message(
     (void)eventType;
     (void)userData;
 
+    if (!event || !event->data || event->numBytes <= 0)
+    {
+        Utils::threadSafePrint(
+            "[WASM] Mensagem WebSocket vazia",
+            true
+        );
+
+        return EM_TRUE;
+    }
 
     std::string msg(
-        (char*)event->data,
+        reinterpret_cast<const char*>(event->data),
         event->numBytes
     );
-
 
     Utils::threadSafePrint(
         "[WASM] RX: " + msg,
         true
     );
 
+    // ==================================================
+    // Parse JSON
+    // ==================================================
 
     picojson::value json;
 
     std::string err =
-        picojson::parse(
-            json,
-            msg
-        );
+        picojson::parse(json, msg);
 
-
-    if(!err.empty())
+    if (!err.empty())
     {
         Utils::threadSafePrint(
-            "[WASM] JSON invalido",
+            "[WASM] JSON invalido: " + err,
             true
         );
+
         return EM_TRUE;
     }
 
+    if (!json.is<picojson::object>())
+    {
+        Utils::threadSafePrint(
+            "[WASM] JSON recebido nao e objeto",
+            true
+        );
 
-
-    if(!json.is<picojson::object>())
         return EM_TRUE;
+    }
 
-
-    auto obj =
+    picojson::object obj =
         json.get<picojson::object>();
 
 
+    // ==================================================
+    // LOGIN RESPONSE
+    // ==================================================
 
-    // Job vindo do proxy
-    if(
-        obj.find("identifier") != obj.end()
-        &&
-        obj["identifier"].get<std::string>()
-            == "job"
-    )
+    auto resultIt = obj.find("result");
+
+    if (resultIt != obj.end() &&
+        resultIt->second.is<picojson::object>())
     {
+        picojson::object result =
+            resultIt->second.get<picojson::object>();
 
-        processNewJob(obj);
+        auto statusIt = result.find("status");
 
+        if (statusIt != result.end() &&
+            statusIt->second.is<std::string>())
+        {
+            std::string status =
+                statusIt->second.get<std::string>();
 
-        return EM_TRUE;
+            Utils::threadSafePrint(
+                "[WASM] Pool status: " + status,
+                true
+            );
+
+            if (status == "OK")
+            {
+                Utils::threadSafePrint(
+                    "[WASM] *** LOGIN ACEITO ***",
+                    true
+                );
+            }
+        }
     }
 
 
+    // ==================================================
+    // JOB
+    //
+    // Formato recebido:
+    //
+    // {
+    //   "jsonrpc":"2.0",
+    //   "method":"job",
+    //   "params":{
+    //      "blob":"...",
+    //      "algo":"rx/0",
+    //      "height":123,
+    //      "seed_hash":"...",
+    //      "job_id":"...",
+    //      "target":"..."
+    //   }
+    // }
+    // ==================================================
 
-    // Login OK
-    if(
-        obj.find("status") != obj.end()
-    )
+    auto methodIt = obj.find("method");
+
+    if (methodIt != obj.end() &&
+        methodIt->second.is<std::string>())
     {
+        std::string method =
+            methodIt->second.get<std::string>();
+
+
+        // ----------------------------------------------
+        // JOB
+        // ----------------------------------------------
+
+        if (method == "job")
+        {
+            Utils::threadSafePrint(
+                "[WASM] *** JOB RECEBIDO ***",
+                true
+            );
+
+            auto paramsIt =
+                obj.find("params");
+
+            if (paramsIt == obj.end())
+            {
+                Utils::threadSafePrint(
+                    "[WASM] JOB sem params",
+                    true
+                );
+
+                return EM_TRUE;
+            }
+
+            if (!paramsIt->second.is<picojson::object>())
+            {
+                Utils::threadSafePrint(
+                    "[WASM] params do JOB nao e objeto",
+                    true
+                );
+
+                return EM_TRUE;
+            }
+
+            picojson::object params =
+                paramsIt->second.get<picojson::object>();
+
+
+            // ------------------------------------------
+            // Debug dos campos
+            // ------------------------------------------
+
+            if (params.find("job_id") != params.end())
+            {
+                Utils::threadSafePrint(
+                    "[WASM] Job ID: " +
+                    params["job_id"].get<std::string>(),
+                    true
+                );
+            }
+
+            if (params.find("height") != params.end())
+            {
+                Utils::threadSafePrint(
+                    "[WASM] Height: " +
+                    std::to_string(
+                        static_cast<uint64_t>(
+                            params["height"].get<double>()
+                        )
+                    ),
+                    true
+                );
+            }
+
+            if (params.find("algo") != params.end())
+            {
+                Utils::threadSafePrint(
+                    "[WASM] Algo: " +
+                    params["algo"].get<std::string>(),
+                    true
+                );
+            }
+
+            if (params.find("target") != params.end())
+            {
+                Utils::threadSafePrint(
+                    "[WASM] Target: " +
+                    params["target"].get<std::string>(),
+                    true
+                );
+            }
+
+
+            // ------------------------------------------
+            // Criar Job
+            // ------------------------------------------
+
+            processNewJob(params);
+
+            return EM_TRUE;
+        }
+
+
+        // ----------------------------------------------
+        // OUTROS METODOS
+        // ----------------------------------------------
+
         Utils::threadSafePrint(
-            "[WASM] Status: "
-            +
-            obj["status"].get<std::string>(),
+            "[WASM] Metodo recebido: " + method,
             true
         );
     }
 
+
+    // ==================================================
+    // ERROR
+    // ==================================================
+
+    auto errorIt = obj.find("error");
+
+    if (errorIt != obj.end())
+    {
+        Utils::threadSafePrint(
+            "[WASM] Pool retornou ERROR",
+            true
+        );
+
+        if (errorIt->second.is<picojson::object>())
+        {
+            picojson::object error =
+                errorIt->second.get<picojson::object>();
+
+            auto messageIt =
+                error.find("message");
+
+            if (messageIt != error.end() &&
+                messageIt->second.is<std::string>())
+            {
+                Utils::threadSafePrint(
+                    "[WASM] Erro: " +
+                    messageIt->second.get<std::string>(),
+                    true
+                );
+            }
+        }
+    }
 
 
     return EM_TRUE;
