@@ -148,59 +148,25 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
 
 #ifdef __EMSCRIPTEN__
 
-    /*
-     * IMPORTANTÍSSIMO:
-     *
-     * No navegador não queremos:
-     *
-     * RANDOMX_FLAG_FULL_MEM
-     * RANDOMX_FLAG_LARGE_PAGES
-     *
-     * FULL_MEM exige o dataset enorme do RandomX.
-     *
-     * Para o WASM usamos LIGHT MODE:
-     *
-     *     Cache
-     *       ↓
-     *     VM
-     *       ↓
-     *     RandomX
-     */
+useLightMode = true;
 
-    useLightMode = true;
+// TESTE: sem JIT
+flags = detectedFlags;
 
-    flags =
-        detectedFlags |
-        RANDOMX_FLAG_JIT;
+flags &= ~RANDOMX_FLAG_FULL_MEM;
+flags &= ~RANDOMX_FLAG_LARGE_PAGES;
 
-    flags &=
-        ~RANDOMX_FLAG_FULL_MEM;
+cacheAllocFlags = detectedFlags;
 
-    flags &=
-        ~RANDOMX_FLAG_LARGE_PAGES;
+cacheAllocFlags &= ~RANDOMX_FLAG_FULL_MEM;
+cacheAllocFlags &= ~RANDOMX_FLAG_LARGE_PAGES;
 
-    cacheAllocFlags =
-        detectedFlags |
-        RANDOMX_FLAG_JIT;
-
-    cacheAllocFlags &=
-        ~RANDOMX_FLAG_FULL_MEM;
-
-    cacheAllocFlags &=
-        ~RANDOMX_FLAG_LARGE_PAGES;
-
-    Utils::threadSafePrint(
-        "[WASM] RandomX: LIGHT MODE",
-        true
-    );
-
-    Utils::threadSafePrint(
-        "[WASM] RandomX: dataset FULL_MEM desativado",
-        true
-    );
+Utils::threadSafePrint(
+    "[WASM] RandomX LIGHT MODE + JIT DESATIVADO",
+    true
+);
 
 #else
-
     // --------------------------------------------------
     // Desktop
     // --------------------------------------------------
