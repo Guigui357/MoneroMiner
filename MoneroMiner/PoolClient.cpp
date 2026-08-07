@@ -1,389 +1,466 @@
 #include "PoolClient.h"
 #include "Config.h"
-#include "Globals.h"
 #include "Utils.h"
-#include "RandomXManager.h"
-#include "MiningStats.h"
-#include <iostream>
-#include <chrono>
-#include <thread>
-#include <cstring>
-#include <vector>
-#include <atomic>
-#include "picojson.h"
+#include "Globals.h"
 
-// Biblioteca nativa do Emscripten para controle do WebSocket do Navegador
-#include <emscripten/websocket.h>
-#include <emscripten/threading.h>
+#include <sstream>
 
-using namespace picojson;
-
-extern void miningThread(MiningThreadData* data);
 
 namespace PoolClient {
-    // Definições de membros estáticos
-    socket_t poolSocket = INVALID_SOCKET_VALUE; 
-    EMSCRIPTEN_WEBSOCKET_T wsHandle = 0;        
 
-    std::mutex jobMutex;
-    std::queue<Job> jobQueue;
-    std::condition_variable jobAvailable;
-    std::condition_variable jobQueueCondition;
-    std::atomic<bool> shouldStop(false);
-    std::string currentSeedHash;
-    std::string sessionId;
-    std::string currentTargetHex;
-    std::vector<std::shared_ptr<MiningThreadData>> threadData;
-    std::mutex socketMutex;
-    std::mutex submitMutex;
-    std::string poolId;
 
-    // Elementos de sincronização assíncrona
-    static std::string lastResponseStr;
-    static std::mutex responseMutex;
-    static std::condition_variable responseAvailable;
-    static std::atomic<bool> responseReady{false};
+// ==================================================
+// Globals
+// ==================================================
 
-    // Forward declarations internas
-    bool sendRequest(const std::string& request);
-    void processNewJobFromObj(const picojson::object& obj);
-    bool processShareResponse(const std::string& response);
-    
-    // =========================================================================
-    // CALLBACKS DO WEBSOCKET (Executados na Thread do Navegador)
-    // =========================================================================
+#ifdef __EMSCRIPTEN__
 
-    EM_BOOL on_message_received(int eventType, const EmscriptenWebSocketMessageEvent *websocketEvent, void *userData) {
-        (void)eventType; (void)userData;
-        
-        if (websocketEvent->isText && websocketEvent->numBytes > 0) {
-            std::string msg((char*)websocketEvent->data, websocketEvent->numBytes);
-            
-            try {
-                picojson::value v;
-                std::string err = picojson::parse(v, msg);
-                if (!err.empty()) return EM_TRUE;
+EMSCRIPTEN_WEBSOCKET_T poolSocket = 0;
 
-                if (v.is<picojson::object>()) {
-                    const picojson::object& obj = v.get<picojson::object>();
+#else
 
-                    // CAPTURA DE JOB
-                    if (obj.find("identifier") != obj.end() && obj.at("identifier").get<std::string>() == "job") {
-                        processNewJobFromObj(obj);
-                    } 
-                    // CAPTURA DE RESPOSTAS DE SHARE OU HANDSHAKE
-                    else {
-                        std::lock_guard<std::mutex> lock(responseMutex);
-                        lastResponseStr = msg;
-                        responseReady = true;
-                        responseAvailable.notify_one(); 
-                    }
-                }
-            } catch (...) {
-                // Tratamento seguro contra falhas
-            }
-        }
-        return EM_TRUE;
-    }
+socket_t poolSocket = INVALID_SOCKET;
 
-    EM_BOOL on_close_event(int eventType, const EmscriptenWebSocketCloseEvent *websocketEvent, void *userData) {
-        (void)eventType; (void)websocketEvent; (void)userData;
-        Utils::threadSafePrint("[WASM] ❌ Conexão WebSocket encerrada com o servidor proxy.", true);
-        poolSocket = INVALID_SOCKET_VALUE;
-        wsHandle = 0;
-        return EM_TRUE;
-    }
+#endif
 
-    EM_BOOL on_ws_open(int eventType, const EmscriptenWebSocketOpenEvent *websocketEvent, void *userData) {
-        (void)eventType; (void)websocketEvent; (void)userData;
 
-        Utils::threadSafePrint("[WASM] OPEN CALLBACK EXECUTADO", true);
-        
-        PoolClient::poolSocket = 0;
-        Utils::threadSafePrint("[WASM] -> SUCESSO: WebSocket conectado e pronto para tráfego!", true);
-        
-        // CORREÇÃO CRÍTICA: Dispara a autenticação somente agora que o canal está de fato pronto
-        bool result = PoolClient::login(
-            config.walletAddress,
-            config.password,
-            config.workerName,
-            config.userAgent
+std::mutex jobMutex;
+std::mutex socketMutex;
+std::mutex submitMutex;
+
+std::queue<Job> jobQueue;
+
+std::condition_variable jobAvailable;
+std::condition_variable jobQueueCondition;
+
+std::atomic<bool> shouldStop(false);
+
+std::string currentSeedHash;
+std::string sessionId;
+std::string currentTargetHex;
+std::string poolId;
+
+
+// ==================================================
+// Initialize
+// ==================================================
+
+bool initialize()
+{
+    shouldStop = false;
+
+    Utils::threadSafePrint(
+        "[WASM] PoolClient inicializado",
+        true
+    );
+
+    return true;
+}
+
+
+
+// ==================================================
+// WebSocket callbacks
+// ==================================================
+
+#ifdef __EMSCRIPTEN__
+
+
+EM_BOOL on_ws_open(
+    int eventType,
+    const EmscriptenWebSocketOpenEvent* event,
+    void* userData
+)
+{
+    (void)eventType;
+    (void)event;
+    (void)userData;
+
+
+    Utils::threadSafePrint(
+        "[WASM] WebSocket conectado",
+        true
+    );
+
+
+    bool ok = login(
+        config.walletAddress,
+        config.password,
+        config.workerName,
+        config.userAgent
+    );
+
+
+    Utils::threadSafePrint(
+        ok ?
+        "[WASM] Login enviado":
+        "[WASM] Falha enviando login",
+        true
+    );
+
+
+    return EM_TRUE;
+}
+
+
+
+EM_BOOL on_ws_message(
+    int eventType,
+    const EmscriptenWebSocketMessageEvent* event,
+    void* userData
+)
+{
+    (void)eventType;
+    (void)userData;
+
+
+    std::string msg(
+        (char*)event->data,
+        event->numBytes
+    );
+
+
+    Utils::threadSafePrint(
+        "[WASM] RX: " + msg,
+        true
+    );
+
+
+    picojson::value json;
+
+    std::string err =
+        picojson::parse(
+            json,
+            msg
         );
 
-        Utils::threadSafePrint(
-            result ?
-            "[WASM] Login enviado OK" :
-            "[WASM] Falha ao enviar login",
-            true
-        );        
-        
-        return EM_TRUE;
-    }
 
-    EM_BOOL on_error(int eventType,
-                     const EmscriptenWebSocketErrorEvent* event,
-                     void* userData)
+    if(!err.empty())
     {
-        (void)eventType;
-        (void)event;
-        (void)userData;
-
-        Utils::threadSafePrint("[WASM] ERRO no WebSocket!", true);
+        Utils::threadSafePrint(
+            "[WASM] JSON invalido",
+            true
+        );
         return EM_TRUE;
     }
 
 
-    // =========================================================================
-    // IMPLEMENTAÇÃO DAS FUNÇÕES CORE DE REDE
-    // =========================================================================
 
-    bool initialize() {
-        return true; 
+    if(!json.is<picojson::object>())
+        return EM_TRUE;
+
+
+    auto obj =
+        json.get<picojson::object>();
+
+
+
+    // Job vindo do proxy
+    if(
+        obj.find("identifier") != obj.end()
+        &&
+        obj["identifier"].get<std::string>()
+            == "job"
+    )
+    {
+
+        processNewJob(obj);
+
+
+        return EM_TRUE;
     }
 
-    bool connect() {
-        if (!emscripten_websocket_is_supported()) {
-            Utils::threadSafePrint("[WASM] Erro crítico: WebSockets não são suportados neste navegador.", true);
-            return false;
-        }
 
-        static const char* proxy_url = "wss://proxy-xmr.onrender.com"; 
-        Utils::threadSafePrint("[WASM] Tentando abrir WebSocket assíncrono para: " + std::string(proxy_url), true);
 
-        EmscriptenWebSocketCreateAttributes ws_attrs;
-        std::memset(&ws_attrs, 0, sizeof(ws_attrs));
-        
-        ws_attrs.url = proxy_url;
-        ws_attrs.protocols = NULL;
-        ws_attrs.createOnMainThread = EM_TRUE;
-
+    // Login OK
+    if(
+        obj.find("status") != obj.end()
+    )
+    {
         Utils::threadSafePrint(
-            std::string("thread=") +
-            (emscripten_is_main_browser_thread() ? "MAIN" : "WORKER"),
+            "[WASM] Status: "
+            +
+            obj["status"].get<std::string>(),
             true
         );
-        
-        wsHandle = emscripten_websocket_new(&ws_attrs);
-        Utils::threadSafePrint(
-            "[WASM] Handle: " + std::to_string((int)wsHandle),
-            true
-        );
-        
-        if (wsHandle <= 0) {
-            Utils::threadSafePrint("[WASM] Falha ao instanciar ponte de controle WebSocket.", true);
-            return false;
-        }
-
-        // Registra os ganchos de eventos que gerenciarão o fluxo assíncrono
-        auto r1 = emscripten_websocket_set_onopen_callback(wsHandle, nullptr, on_ws_open);
-        Utils::threadSafePrint("onopen=" + std::to_string(r1), true);        
-        
-        auto r2 = emscripten_websocket_set_onmessage_callback(wsHandle, NULL, on_message_received);
-        Utils::threadSafePrint("onmessage=" + std::to_string(r2), true);
-        
-        auto r3 = emscripten_websocket_set_onclose_callback(wsHandle, NULL, on_close_event);
-        Utils::threadSafePrint("onclose=" + std::to_string(r3), true);
-
-        auto r4 = emscripten_websocket_set_onerror_callback(wsHandle, NULL, on_error);
-        Utils::threadSafePrint("onerror=" + std::to_string(r4), true);
-        
-        return true;
     }
 
-    bool login(
-        const std::string& wallet,
-        const std::string& password,
-        const std::string& worker,
-        const std::string& userAgent
-    ) {
-        picojson::object loginReq;
-        picojson::object paramsObj;
 
-        paramsObj["login"] = picojson::value(wallet);
-        paramsObj["pass"] = picojson::value(worker.empty() ? "WasmMiner" : worker);
-        paramsObj["agent"] = picojson::value(userAgent.empty() ? "XMR-CryptoNightWeb/1.0" : userAgent);
 
-        loginReq["identifier"] = picojson::value("handshake");
-        loginReq["method"] = picojson::value("login");
-        loginReq["id"] = picojson::value(1.0);
-        loginReq["params"] = picojson::value(paramsObj);
+    return EM_TRUE;
+}
 
-        std::string payload = picojson::value(loginReq).serialize();
 
-        if (wsHandle <= 0) {
-            Utils::threadSafePrint("[WASM] WebSocket inválido no login", true);
-            return false;
-        }
 
-        EMSCRIPTEN_RESULT res =
-            emscripten_websocket_send_utf8_text(
-                wsHandle,
-                payload.c_str()
-            );
+EM_BOOL on_ws_close(
+    int eventType,
+    const EmscriptenWebSocketCloseEvent* event,
+    void* userData
+)
+{
+    (void)eventType;
+    (void)event;
+    (void)userData;
 
-        if (res == EMSCRIPTEN_RESULT_SUCCESS) {
-            Utils::threadSafePrint("[WASM] Handshake de autenticação padronizado disparado.", true);
-            sessionId = "wasm_active_session";
-            return true;
-        }
+
+    Utils::threadSafePrint(
+        "[WASM] WebSocket fechado",
+        true
+    );
+
+
+    poolSocket = 0;
+
+    return EM_TRUE;
+}
+
+
+
+EM_BOOL on_ws_error(
+    int eventType,
+    const EmscriptenWebSocketErrorEvent* event,
+    void* userData
+)
+{
+    (void)eventType;
+    (void)event;
+    (void)userData;
+
+
+    Utils::threadSafePrint(
+        "[WASM] Erro WebSocket",
+        true
+    );
+
+
+    return EM_TRUE;
+}
+
+
+#endif
+
+
+
+// ==================================================
+// Connect
+// ==================================================
+
+bool connect()
+{
+
+#ifdef __EMSCRIPTEN__
+
+
+    EmscriptenWebSocketCreateAttributes attr;
+
+    emscripten_websocket_init_create_attributes(
+        &attr
+    );
+
+
+    attr.url =
+        "wss://proxy-xmr.onrender.com";
+
+
+    attr.protocols = nullptr;
+
+    attr.createOnMainThread = EM_TRUE;
+
+
+
+    poolSocket =
+        emscripten_websocket_new(
+            &attr
+        );
+
+
+    if(poolSocket <= 0)
+    {
+        Utils::threadSafePrint(
+            "[WASM] Falha criando WebSocket",
+            true
+        );
 
         return false;
     }
 
-    bool sendRequest(const std::string& request) {
-        if (poolSocket == INVALID_SOCKET_VALUE || wsHandle <= 0) {
-            return false;
-        }
-        EMSCRIPTEN_RESULT res = emscripten_websocket_send_utf8_text(wsHandle, request.c_str());
-        return (res == EMSCRIPTEN_RESULT_SUCCESS);
-    }
 
-    std::string sendAndReceive(const std::string& payload) {
-        std::unique_lock<std::mutex> lock(responseMutex);
-        responseReady = false;
-        lastResponseStr.clear();
 
-        if (!sendRequest(payload)) {
-            return "";
-        }
+    emscripten_websocket_set_onopen_callback(
+        poolSocket,
+        nullptr,
+        on_ws_open
+    );
 
-        if (responseAvailable.wait_for(lock, std::chrono::seconds(4), [] { return responseReady.load(); })) {
-            return lastResponseStr;
-        }
-        return ""; 
-    }
 
-    // =========================================================================
-    // PROCESSAMENTO DE JOBS E SHARES
-    // =========================================================================
+    emscripten_websocket_set_onmessage_callback(
+        poolSocket,
+        nullptr,
+        on_ws_message
+    );
 
-    void processNewJobFromObj(const picojson::object& obj) {
-        try {
-            std::string blobStr = obj.at("blob").get<std::string>();
-            std::string jobId = obj.at("job_id").get<std::string>();
-            std::string target = obj.at("target").get<std::string>();
-            uint64_t height = static_cast<uint64_t>(obj.at("height").get<double>());
-            std::string seedHash = obj.at("seed_hash").get<std::string>();
 
-            if (RandomXManager::setTargetAndDifficulty(target)) {
-                Job job(blobStr, jobId, target, height, seedHash);
-                
-                {
-                    std::lock_guard<std::mutex> lock(jobMutex);
-                    jobQueue.push(job);
-                    jobAvailable.notify_all();
-                }
-                
-                Utils::threadSafePrint("[WASM] -> SUCESSO: Novo Job recebido do Proxy! ID: " + jobId, true);
+    emscripten_websocket_set_onclose_callback(
+        poolSocket,
+        nullptr,
+        on_ws_close
+    );
 
-                if (::miningThreads.empty() && !shouldStop) {
-                    Utils::threadSafePrint("[WASM] Inicializando a máquina virtual RandomX (Modo Light)...", true);
-                    
-                    if (!RandomXManager::initialize(seedHash)) {
-                        Utils::threadSafePrint("[WASM] Falha crítica ao inicializar gerência do RandomX.", true);
-                        return;
-                    }
 
-                    threadData.resize(static_cast<size_t>(config.numThreads));
-                    for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-                        threadData[i] = std::make_shared<MiningThreadData>(static_cast<int>(i));
-                        if (!threadData[i]->initializeVM()) {
-                            Utils::threadSafePrint("[WASM] Falha ao alocar VM para o Worker " + std::to_string(i), true);
-                            return;
-                        }
-                    }
+    emscripten_websocket_set_onerror_callback(
+        poolSocket,
+        nullptr,
+        on_ws_error
+    );
 
-                    for (size_t i = 0; i < static_cast<size_t>(config.numThreads); i++) {
-                        ::miningThreads.push_back(std::thread(static_cast<void(*)(MiningThreadData*)>(miningThread), threadData[i].get()));
-                    }
-                }
 
-                if (!::statsThreadRunning) {
-                    ::statsWebThread = std::thread(webStatsMonitorLoop);
-                }
 
-                Utils::threadSafePrint("[WASM] === WORKERS DISPARADOS COM SUCESSO! MINERAÇÃO ATIVA ===", true);
-            }
-        } 
-        catch (const std::exception& e) {
-            Utils::threadSafePrint("[WASM] Erro ao analisar propriedades do Job: " + std::string(e.what()), true);
-        }
-    }
+    Utils::threadSafePrint(
+        "[WASM] WebSocket criado",
+        true
+    );
 
-    bool submitShare(const std::string& jobId, const std::string& nonceHex,
-                     const std::string& hashHex, const std::string& algo) {
-        (void)algo;
-        std::lock_guard<std::mutex> submitLock(submitMutex);
 
-        picojson::object submitReq;
-        submitReq["identifier"] = picojson::value("submit");
-        submitReq["job_id"] = picojson::value(jobId);
-        submitReq["nonce"] = picojson::value(nonceHex);
-        submitReq["result"] = picojson::value(hashHex);
+    return true;
 
-        std::string payload = picojson::value(submitReq).serialize();
-        std::unique_lock<std::mutex> rLock(responseMutex);
-        responseReady = false;
 
-        if (!sendRequest(payload)) {
-            MiningStatsUtil::rejectedShares++;
-            return false;
-        }
+#else
 
-        Utils::threadSafePrint("[WASM] Compartilhamento (Share) computado enviado para o Proxy...", true);
+    return false;
 
-        if (responseAvailable.wait_for(rLock, std::chrono::seconds(4), [] { return responseReady.load(); })) {
-            if (lastResponseStr.find("hash") != std::string::npos) {
-                MiningStatsUtil::acceptedShares++;
-                Utils::threadSafePrint("[WASM] 🔥 EXCELENTE! Share validado e ACEITO pela Pool MoneroOcean!", true);
-                return true;
-            }
-        }
+#endif
 
-        MiningStatsUtil::rejectedShares++;
-        Utils::threadSafePrint("[WASM] ❌ Share REJEITADO ou sem resposta de validação.", true);
+}
+
+
+
+// ==================================================
+// Login
+// ==================================================
+
+bool login(
+    const std::string& wallet,
+    const std::string& password,
+    const std::string& worker,
+    const std::string& userAgent
+)
+{
+
+    picojson::object params;
+
+
+    params["login"] =
+        picojson::value(wallet);
+
+
+    params["pass"] =
+        picojson::value(password);
+
+
+    params["agent"] =
+        picojson::value(userAgent);
+
+
+
+    picojson::object root;
+
+
+    root["id"] =
+        picojson::value(1.0);
+
+
+    root["method"] =
+        picojson::value("login");
+
+
+    root["params"] =
+        picojson::value(params);
+
+
+
+    std::string json =
+        picojson::value(root).serialize();
+
+
+
+#ifdef __EMSCRIPTEN__
+
+
+    int result =
+        emscripten_websocket_send_utf8_text(
+            poolSocket,
+            json.c_str()
+        );
+
+
+    if(result != EMSCRIPTEN_RESULT_SUCCESS)
+    {
         return false;
     }
 
-    void cleanup() {
-        if (wsHandle > 0) {
-            emscripten_websocket_close(wsHandle, 1000, "Sessao Encerrada");
-        }
-        poolSocket = INVALID_SOCKET_VALUE;
-        wsHandle = 0;
+
+    Utils::threadSafePrint(
+        "[WASM] LOGIN -> "
+        + json,
+        true
+    );
+
+
+    return true;
+
+
+#else
+
+    return false;
+
+#endif
+
+}
+
+
+
+// ==================================================
+// Cleanup
+// ==================================================
+
+void cleanup()
+{
+
+#ifdef __EMSCRIPTEN__
+
+    if(poolSocket)
+    {
+        emscripten_websocket_close(
+            poolSocket,
+            1000,
+            "shutdown"
+        );
+
+        poolSocket = 0;
     }
 
-    // =========================================================================
-    // STUBS DE COMPATIBILIDADE
-    // =========================================================================
-    void jobListener() {}
+#endif
 
-    void processNewJob(const picojson::object& jobObj) {
-        (void)jobObj;
-    }
 
-    void distributeJob(const Job& job) {
-        (void)job;
-    }
+    while(!jobQueue.empty())
+        jobQueue.pop();
 
-    std::string receiveData(socket_t sock) {
-        (void)sock;
-        return "";
-    }
+}
 
-    std::string sendData(const std::string& data) {
-        (void)data;
-        return "";
-    }
 
-    bool reconnect() {
-        return connect();
-    }
 
-    void sendKeepalive() {}
+// ==================================================
+// Job placeholder
+// ==================================================
 
-    bool processShareResponse(const std::string& response) {
-        (void)response;
-        return true;
-    }
+void processNewJob(
+    const picojson::object& jobObj
+)
+{
+    (void)jobObj
+
+}
+
+
+
 }
