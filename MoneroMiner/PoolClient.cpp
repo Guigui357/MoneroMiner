@@ -1,7 +1,11 @@
-#include "PoolClient.h"
 #include "Config.h"
-#include "Utils.h"
+#include "PoolClient.h"
+#include "RandomXManager.h"
+#include "MiningStats.h"
+#include "MiningThreadData.h"
+#include "Job.h"
 #include "Globals.h"
+#include "Platform.h"
 
 #include <sstream>
 
