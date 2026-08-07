@@ -131,7 +131,7 @@ namespace PoolClient {
             return false;
         }
 
-        static const char* proxy_url = "wss://proxy-xmr-2.onrender.com"; 
+        static const char* proxy_url = "wss://proxy-xmr.onrender.com:10000"; 
         Utils::threadSafePrint("[WASM] Tentando abrir WebSocket assíncrono para: " + std::string(proxy_url), true);
 
         EmscriptenWebSocketCreateAttributes ws_attrs;
