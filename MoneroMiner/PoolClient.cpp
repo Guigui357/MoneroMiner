@@ -156,21 +156,34 @@ namespace PoolClient {
         ws_attrs.protocols = NULL;
         ws_attrs.createOnMainThread = EM_FALSE;
 
+        Utils::threadSafePrint(
+            "pthread=" + std::to_string(emscripten_is_main_runtime_thread()),
+            true
+        );
+        
         wsHandle = emscripten_websocket_new(&ws_attrs);
         Utils::threadSafePrint(
             "[WASM] Handle: " + std::to_string((int)wsHandle),
             true
         );
+        
         if (wsHandle <= 0) {
             Utils::threadSafePrint("[WASM] Falha ao instanciar ponte de controle WebSocket.", true);
             return false;
         }
 
         // Registra os ganchos de eventos que gerenciarão o fluxo assíncrono
-        emscripten_websocket_set_onopen_callback(wsHandle, NULL, on_ws_open);
-        emscripten_websocket_set_onmessage_callback(wsHandle, NULL, on_message_received);
-        emscripten_websocket_set_onclose_callback(wsHandle, NULL, on_close_event);
-        emscripten_websocket_set_onerror_callback(wsHandle, NULL, on_error);
+        auto r1 = emscripten_websocket_set_onopen_callback(wsHandle, nullptr, on_ws_open);
+        Utils::threadSafePrint("onopen=" + std::to_string(r1), true);        
+        
+        auto r2 = emscripten_websocket_set_onmessage_callback(wsHandle, NULL, on_message_received);
+        Utils::threadSafePrint("onmessage=" + std::to_string(r2), true);
+        
+        auto r3 = emscripten_websocket_set_onclose_callback(wsHandle, NULL, on_close_event);
+        Utils::threadSafePrint("onclose=" + std::to_string(r3), true);
+
+        auto r4 = emscripten_websocket_set_onerror_callback(wsHandle, NULL, on_error);
+        Utils::threadSafePrint("onerror=" + std::to_string(r4), true);
         
         return true;
     }
