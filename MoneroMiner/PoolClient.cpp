@@ -542,29 +542,48 @@ void processNewJob(
 {
     try
     {
-        Job job;
+        std::string blob;
+        std::string jobId;
+        std::string target;
+        std::string seed;
+        uint64_t height = 0;
 
 
-        // Dados principais do job
+        if(jobObj.find("blob") != jobObj.end())
+        {
+            blob =
+                jobObj.at("blob")
+                .get<std::string>();
+        }
+
+
         if(jobObj.find("job_id") != jobObj.end())
         {
-            job.jobId =
+            jobId =
                 jobObj.at("job_id")
                 .get<std::string>();
         }
 
 
-        if(jobObj.find("blob") != jobObj.end())
+        if(jobObj.find("target") != jobObj.end())
         {
-            job.blob =
-                jobObj.at("blob")
+            target =
+                jobObj.at("target")
+                .get<std::string>();
+        }
+
+
+        if(jobObj.find("seed_hash") != jobObj.end())
+        {
+            seed =
+                jobObj.at("seed_hash")
                 .get<std::string>();
         }
 
 
         if(jobObj.find("height") != jobObj.end())
         {
-            job.height =
+            height =
                 static_cast<uint64_t>(
                     jobObj.at("height")
                     .get<double>()
@@ -572,20 +591,26 @@ void processNewJob(
         }
 
 
-        if(jobObj.find("target") != jobObj.end())
+
+        if(blob.empty() || jobId.empty())
         {
-            job.target =
-                jobObj.at("target")
-                .get<std::string>();
+            Utils::threadSafePrint(
+                "[WASM] JOB inválido",
+                true
+            );
+
+            return;
         }
 
 
-        if(jobObj.find("algo") != jobObj.end())
-        {
-            job.algo =
-                jobObj.at("algo")
-                .get<std::string>();
-        }
+
+        Job job(
+            blob,
+            jobId,
+            target,
+            height,
+            seed
+        );
 
 
 
@@ -595,7 +620,6 @@ void processNewJob(
             );
 
 
-            // remove job antigo
             while(!jobQueue.empty())
                 jobQueue.pop();
 
@@ -611,13 +635,14 @@ void processNewJob(
 
         Utils::threadSafePrint(
             "[WASM] Novo JOB: "
-            + job.jobId
+            + jobId
             +
-            " altura "
+            " Height: "
             +
-            std::to_string(job.height),
+            std::to_string(height),
             true
         );
+
 
 
     }
@@ -625,7 +650,9 @@ void processNewJob(
     {
 
         Utils::threadSafePrint(
-            std::string("[WASM] Erro processando JOB: ")
+            std::string(
+                "[WASM] Erro criando JOB: "
+            )
             +
             e.what(),
             true
