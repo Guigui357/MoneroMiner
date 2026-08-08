@@ -148,23 +148,59 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
 
 #ifdef __EMSCRIPTEN__
 
-useLightMode = true;
+    // =========================================================
+    // WASM: RandomX LIGHT MODE
+    // =========================================================
 
-// TESTE: sem JIT
-flags = detectedFlags;
+    const randomx_flags wasmFlags = RANDOMX_FLAG_DEFAULT;
 
-flags &= ~RANDOMX_FLAG_FULL_MEM;
-flags &= ~RANDOMX_FLAG_LARGE_PAGES;
+    Utils::threadSafePrint(
+        "[WASM] Criando VM RandomX LIGHT para thread " +
+        std::to_string(threadId),
+        true
+    );
 
-cacheAllocFlags = detectedFlags;
+    Utils::threadSafePrint(
+        "[WASM] VM flags: 0x00000000",
+        true
+    );
 
-cacheAllocFlags &= ~RANDOMX_FLAG_FULL_MEM;
-cacheAllocFlags &= ~RANDOMX_FLAG_LARGE_PAGES;
+    Utils::threadSafePrint(
+        "[WASM] Cache: " +
+        std::string(cache != nullptr ? "OK" : "NULL"),
+        true
+    );
 
-Utils::threadSafePrint(
-    "[WASM] RandomX LIGHT MODE + JIT DESATIVADO",
-    true
-);
+    Utils::threadSafePrint(
+        "[WASM] Chamando randomx_create_vm()...",
+        true
+    );
+
+    randomx_vm* vm = randomx_create_vm(
+        wasmFlags,
+        cache,
+        nullptr
+    );
+
+    if (vm == nullptr)
+    {
+        Utils::threadSafePrint(
+            "[WASM] ERRO: randomx_create_vm() retornou nullptr",
+            true
+        );
+
+        return false;
+    }
+
+    vms[threadId] = vm;
+
+    Utils::threadSafePrint(
+        "[WASM] VM RandomX LIGHT criada com sucesso: thread " +
+        std::to_string(threadId),
+        true
+    );
+
+    return true;
 
 #else
     // --------------------------------------------------
