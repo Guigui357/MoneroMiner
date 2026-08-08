@@ -614,70 +614,303 @@ void miningThread(MiningThreadData* data) {
     }
 }
 
-void processNewJob(const picojson::object& jobObj) {
-    try {
-        // Extract job details
-        std::string jobId = jobObj.at("job_id").get<std::string>();
-        std::string blob = jobObj.at("blob").get<std::string>();
-        std::string target = jobObj.at("target").get<std::string>();
-        uint64_t height = static_cast<uint64_t>(jobObj.at("height").get<double>());
-        std::string seedHash = jobObj.at("seed_hash").get<std::string>();
+void PoolClient::processNewJob(const picojson::object& jobObj)
+{
+    try
+    {
+        Utils::threadSafePrint(
+            "[WASM] *** JOB RECEBIDO ***",
+            true
+        );
 
-        Job job(blob, jobId, target, height, seedHash);
+        // --------------------------------------------------
+        // Extrair campos do job
+        // --------------------------------------------------
 
-        // Set target in RandomXManager
-        if (!RandomXManager::setTargetAndDifficulty(target)) {
-            Utils::threadSafePrint("Failed to set target", true);
+        auto blobIt = jobObj.find("blob");
+        auto jobIdIt = jobObj.find("job_id");
+        auto targetIt = jobObj.find("target");
+        auto heightIt = jobObj.find("height");
+        auto algoIt = jobObj.find("algo");
+        auto seedHashIt = jobObj.find("seed_hash");
+
+        if (blobIt == jobObj.end() ||
+            jobIdIt == jobObj.end() ||
+            targetIt == jobObj.end())
+        {
+            Utils::threadSafePrint(
+                "[WASM] ERRO: Job incompleto recebido do pool",
+                true
+            );
+
             return;
         }
 
-        // FIX C4244 WARNING - Explicit intermediate variable
-        uint32_t jobIdNum = 0;
-        try {
-            size_t pos = 0;
-            uint32_t temp = static_cast<uint32_t>(std::stoul(jobId, &pos, 10));
-            jobIdNum = temp;
-        } catch (const std::exception&) {
-            jobIdNum = static_cast<uint32_t>(std::hash<std::string>{}(jobId));
-        }
-        
-        if (jobIdNum != activeJobId.load()) {
-            activeJobId.store(jobIdNum);
-            notifiedJobId.store(jobIdNum);
+        std::string blobHex = blobIt->second.get<std::string>();
+        std::string jobId = jobIdIt->second.get<std::string>();
+        std::string targetHex = targetIt->second.get<std::string>();
 
-            if (!RandomXManager::initialize(seedHash)) {
-                Utils::threadSafePrint("Failed to initialize RandomX with seed hash: " + seedHash, true);
+        std::string algo = "rx/0";
+
+        if (algoIt != jobObj.end())
+        {
+            algo = algoIt->second.get<std::string>();
+        }
+
+        uint64_t height = 0;
+
+        if (heightIt != jobObj.end())
+        {
+            height =
+                static_cast<uint64_t>(
+                    heightIt->second.get<double>()
+                );
+        }
+
+        std::string seedHash;
+
+        if (seedHashIt != jobObj.end())
+        {
+            seedHash =
+                seedHashIt->second.get<std::string>();
+        }
+
+        // --------------------------------------------------
+        // Logs
+        // --------------------------------------------------
+
+        Utils::threadSafePrint(
+            "[WASM] Job ID: " + jobId,
+            true
+        );
+
+        Utils::threadSafePrint(
+            "[WASM] Height: " +
+            std::to_string(height),
+            true
+        );
+
+        Utils::threadSafePrint(
+            "[WASM] Algo: " + algo,
+            true
+        );
+
+        Utils::threadSafePrint(
+            "[WASM] Target: " + targetHex,
+            true
+        );
+
+        if (!seedHash.empty())
+        {
+            Utils::threadSafePrint(
+                "[WASM] Seed hash: " + seedHash,
+                true
+            );
+        }
+
+        // --------------------------------------------------
+        // Converter blob
+        // --------------------------------------------------
+
+        std::vector<uint8_t> blob;
+
+        try
+        {
+            blob = Utils::hexToBytes(blobHex);
+        }
+        catch (const std::exception& e)
+        {
+            Utils::threadSafePrint(
+                std::string("[WASM] ERRO convertendo blob: ")
+                + e.what(),
+                true
+            );
+
+            return;
+        }
+
+        if (blob.empty())
+        {
+            Utils::threadSafePrint(
+                "[WASM] ERRO: blob vazio",
+                true
+            );
+
+            return;
+        }
+
+        Utils::threadSafePrint(
+            "[WASM] Blob recebido: " +
+            std::to_string(blob.size()) +
+            " bytes",
+            true
+        );
+
+        // --------------------------------------------------
+        // Inicializar RandomX
+        // --------------------------------------------------
+
+        if (algo == "rx/0" && seedHash.empty())
+        {
+            Utils::threadSafePrint(
+                "[WASM] ERRO: seed_hash ausente para RandomX",
+                true
+            );
+
+            return;
+        }
+
+        if (algo == "rx/0")
+        {
+            Utils::threadSafePrint(
+                "[WASM] Inicializando RandomX para o job...",
+                true
+            );
+
+            if (!RandomXManager::initialize(seedHash))
+            {
+                Utils::threadSafePrint(
+                    "[WASM] ERRO: RandomX::initialize() falhou",
+                    true
+                );
+
                 return;
             }
 
-            {
-                std::lock_guard<std::mutex> lock(PoolClient::jobMutex);
-                while (!PoolClient::jobQueue.empty()) {
-                    PoolClient::jobQueue.pop();
-                }
-                PoolClient::jobQueue.push(job);
-            }
-
-            if (!config.debugMode) {
-                Utils::threadSafePrint("New job: " + jobId + " | Height: " + std::to_string(height), false);
-            } else {
-                Utils::threadSafePrint("New job details:", true);
-                Utils::threadSafePrint("  Height: " + std::to_string(height), true);
-                Utils::threadSafePrint("  Job ID: " + jobId, true);
-                Utils::threadSafePrint("  Target: 0x" + target, true);
-                Utils::threadSafePrint("  Difficulty: " + std::to_string(job.difficulty), true);
-            }
-
-            PoolClient::jobAvailable.notify_all();
-            PoolClient::jobQueueCondition.notify_all();
-         
+            Utils::threadSafePrint(
+                "[WASM] RandomX inicializado com sucesso",
+                true
+            );
         }
+
+        // --------------------------------------------------
+        // Configurar target
+        // --------------------------------------------------
+
+        if (!RandomXManager::setTargetAndDifficulty(targetHex))
+        {
+            Utils::threadSafePrint(
+                "[WASM] ERRO: não foi possível configurar target",
+                true
+            );
+
+            return;
+        }
+
+        // --------------------------------------------------
+        // Criar Job
+        // --------------------------------------------------
+
+        Job job;
+
+        job.blob = blob;
+        job.jobId = jobId;
+        job.target = targetHex;
+        job.algo = algo;
+        job.height = height;
+
+        // Se seu Job possui seedHash:
+        job.seedHash = seedHash;
+
+        // --------------------------------------------------
+        // Colocar o job na fila
+        // --------------------------------------------------
+
+        {
+            std::lock_guard<std::mutex> lock(jobMutex);
+
+            while (!jobQueue.empty())
+            {
+                jobQueue.pop();
+            }
+
+            jobQueue.push(job);
+        }
+
+        currentBlobHex = blobHex;
+        currentTargetHex = targetHex;
+        currentJobId = jobId;
+
+        // --------------------------------------------------
+        // Marcar novo job
+        // --------------------------------------------------
+
+        newJobAvailable.store(
+            true,
+            std::memory_order_release
+        );
+
+        activeJobId.fetch_add(
+            1,
+            std::memory_order_acq_rel
+        );
+
+        Utils::threadSafePrint(
+            "[WASM] Novo JOB recebido: " +
+            jobId +
+            " | Height: " +
+            std::to_string(height) +
+            " | Target: " +
+            targetHex,
+            true
+        );
+
+        // --------------------------------------------------
+        // Iniciar workers somente no primeiro job
+        // --------------------------------------------------
+
+        static std::atomic<bool> workersStarted(false);
+
+        bool expected = false;
+
+        if (workersStarted.compare_exchange_strong(
+                expected,
+                true,
+                std::memory_order_acq_rel))
+        {
+            Utils::threadSafePrint(
+                "[WASM] Primeiro Job recebido. "
+                "Iniciando startMiningWorkers()...",
+                true
+            );
+
+            startMiningWorkers();
+        }
+        else
+        {
+            Utils::threadSafePrint(
+                "[WASM] Workers já estão ativos. "
+                "Job atualizado.",
+                true
+            );
+        }
+
+        // --------------------------------------------------
+        // Acordar workers
+        // --------------------------------------------------
+
+        jobQueueCV.notify_all();
+
+        Utils::threadSafePrint(
+            "[WASM] JOB processado com sucesso: " +
+            jobId,
+            true
+        );
     }
-    catch (const std::exception& e) {
-        Utils::threadSafePrint("Error processing job: " + std::string(e.what()), true);
+    catch (const std::exception& e)
+    {
+        Utils::threadSafePrint(
+            std::string("[WASM] EXCEPTION em processNewJob(): ")
+            + e.what(),
+            true
+        );
     }
-    catch (...) {
-        Utils::threadSafePrint("Unknown error processing job", true);
+    catch (...)
+    {
+        Utils::threadSafePrint(
+            "[WASM] EXCEPTION desconhecida em processNewJob()",
+            true
+        );
     }
 }
 
