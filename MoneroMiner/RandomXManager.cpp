@@ -3,6 +3,7 @@
 #include "Utils.h"
 #include "Globals.h"
 #include "Platform.h"
+
 #include <fstream>
 #include <vector>
 #include <mutex>
@@ -17,15 +18,15 @@
 #include <cstdint>
 #include <algorithm>
 #include <random>
-
-// Added missing headers for threads and C string functions
 #include <thread>
 #include <cstring>
+#include <filesystem>
 
 // Undefine Windows min/max macros that interfere with std::max
 #ifdef max
 #undef max
 #endif
+
 #ifdef min
 #undef min
 #endif
@@ -42,15 +43,27 @@ std::mutex RandomXManager::hashMutex;
 std::mutex RandomXManager::cacheMutex;
 std::mutex RandomXManager::seedHashMutex;
 std::mutex RandomXManager::targetMutex;
+
 std::unordered_map<int, randomx_vm*> RandomXManager::vms;
+
 randomx_cache* RandomXManager::cache = nullptr;
 randomx_dataset* RandomXManager::dataset = nullptr;
+
 std::string RandomXManager::currentSeedHash;
+
 bool RandomXManager::initialized = false;
 bool RandomXManager::useLightMode = false;
+
 std::vector<uint8_t> RandomXManager::lastHash;
+
 double RandomXManager::currentDifficulty = 0.0;
+
 uint256_t RandomXManager::expandedTarget;
+
+
+// ============================================================
+// INITIALIZE CACHE
+// ============================================================
 
 bool RandomXManager::initializeCache(const std::string& seedHash)
 {
@@ -79,9 +92,9 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
         return false;
     }
 
-    // --------------------------------------------------
+    // ========================================================
     // Converter seed hexadecimal -> bytes
-    // --------------------------------------------------
+    // ========================================================
 
     std::vector<uint8_t> seedBytes;
 
@@ -126,9 +139,9 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
         return false;
     }
 
-    // --------------------------------------------------
+    // ========================================================
     // Detectar flags disponíveis
-    // --------------------------------------------------
+    // ========================================================
 
     int detectedFlags = randomx_get_flags();
 
@@ -142,70 +155,53 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
         true
     );
 
-    // --------------------------------------------------
-    // WASM
-    // --------------------------------------------------
+    // ========================================================
+    // CONFIGURAÇÃO WASM
+    //
+    // IMPORTANTE:
+    // initializeCache() NÃO cria VM.
+    //
+    // A VM é criada posteriormente por:
+    // createVM(int threadId)
+    // ========================================================
 
 #ifdef __EMSCRIPTEN__
 
-    // =========================================================
-    // WASM: RandomX LIGHT MODE
-    // =========================================================
+    useLightMode = true;
 
-    const randomx_flags wasmFlags = RANDOMX_FLAG_DEFAULT;
+    // WASM não utiliza dataset FULL_MEM.
+    // Também não utiliza LARGE_PAGES.
+    //
+    // Mantemos o cache em modo LIGHT.
+    cacheAllocFlags = RANDOMX_FLAG_DEFAULT;
+
+    flags = RANDOMX_FLAG_DEFAULT;
 
     Utils::threadSafePrint(
-        "[WASM] Criando VM RandomX LIGHT para thread " +
-        std::to_string(threadId),
+        "[WASM] RandomX LIGHT MODE",
         true
     );
 
     Utils::threadSafePrint(
-        "[WASM] VM flags: 0x00000000",
+        "[WASM] FULL_MEM desativado",
         true
     );
 
     Utils::threadSafePrint(
-        "[WASM] Cache: " +
-        std::string(cache != nullptr ? "OK" : "NULL"),
+        "[WASM] LARGE_PAGES desativado",
         true
     );
 
     Utils::threadSafePrint(
-        "[WASM] Chamando randomx_create_vm()...",
+        "[WASM] JIT desativado para compatibilidade",
         true
     );
-
-    randomx_vm* vm = randomx_create_vm(
-        wasmFlags,
-        cache,
-        nullptr
-    );
-
-    if (vm == nullptr)
-    {
-        Utils::threadSafePrint(
-            "[WASM] ERRO: randomx_create_vm() retornou nullptr",
-            true
-        );
-
-        return false;
-    }
-
-    vms[threadId] = vm;
-
-    Utils::threadSafePrint(
-        "[WASM] VM RandomX LIGHT criada com sucesso: thread " +
-        std::to_string(threadId),
-        true
-    );
-
-    return true;
 
 #else
-    // --------------------------------------------------
-    // Desktop
-    // --------------------------------------------------
+
+    // ========================================================
+    // DESKTOP
+    // ========================================================
 
     useLightMode = false;
 
@@ -241,9 +237,9 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
 
 #endif
 
-    // --------------------------------------------------
+    // ========================================================
     // Liberar cache anterior
-    // --------------------------------------------------
+    // ========================================================
 
     if (cache != nullptr)
     {
@@ -257,9 +253,9 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
         cache = nullptr;
     }
 
-    // --------------------------------------------------
+    // ========================================================
     // Alocar cache
-    // --------------------------------------------------
+    // ========================================================
 
     Utils::threadSafePrint(
         "[RandomX] Alocando RandomX cache...",
@@ -288,9 +284,9 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
         true
     );
 
-    // --------------------------------------------------
+    // ========================================================
     // Inicializar cache com seed
-    // --------------------------------------------------
+    // ========================================================
 
     Utils::threadSafePrint(
         "[RandomX] Inicializando cache com seed...",
@@ -313,202 +309,492 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
     return true;
 }
 
-bool RandomXManager::createDataset() {
-    if (!cache) {
-        Utils::threadSafePrint("Cannot create dataset: no cache", true);
+
+// ============================================================
+// CREATE DATASET
+// ============================================================
+
+bool RandomXManager::createDataset()
+{
+#ifdef __EMSCRIPTEN__
+
+    // Dataset de ~2 GB não deve ser criado no WASM.
+    Utils::threadSafePrint(
+        "[WASM] createDataset() ignorado: usando LIGHT MODE",
+        true
+    );
+
+    return false;
+
+#else
+
+    if (!cache)
+    {
+        Utils::threadSafePrint(
+            "Cannot create dataset: no cache",
+            true
+        );
+
         return false;
     }
 
-    if (dataset) {
+    if (dataset)
+    {
         randomx_release_dataset(dataset);
         dataset = nullptr;
     }
 
-    Utils::threadSafePrint("Allocating dataset with flags: 0x" + Utils::formatHex(static_cast<uint64_t>(flags), 8), true);
-    
-    dataset = randomx_alloc_dataset(static_cast<randomx_flags>(flags));
-    if (!dataset) {
-        Utils::threadSafePrint("Dataset allocation failed, trying FULL_MEM only", true);
+    Utils::threadSafePrint(
+        "Allocating dataset with flags: 0x"
+        +
+        Utils::formatHex(
+            static_cast<uint64_t>(flags),
+            8
+        ),
+        true
+    );
+
+    dataset =
+        randomx_alloc_dataset(
+            static_cast<randomx_flags>(flags)
+        );
+
+    if (!dataset)
+    {
+        Utils::threadSafePrint(
+            "Dataset allocation failed, trying FULL_MEM only",
+            true
+        );
+
         flags = RANDOMX_FLAG_FULL_MEM;
-        dataset = randomx_alloc_dataset(RANDOMX_FLAG_FULL_MEM);
-        if (!dataset) {
-            Utils::threadSafePrint("Dataset allocation failed", true);
+
+        dataset =
+            randomx_alloc_dataset(
+                RANDOMX_FLAG_FULL_MEM
+            );
+
+        if (!dataset)
+        {
+            Utils::threadSafePrint(
+                "Dataset allocation failed",
+                true
+            );
+
             return false;
         }
     }
 
-    unsigned long itemCount = randomx_dataset_item_count();
-    Utils::threadSafePrint("Initializing " + std::to_string(itemCount) + " dataset items...", true);
+    unsigned long itemCount =
+        randomx_dataset_item_count();
 
-    unsigned int numThreads = std::thread::hardware_concurrency();
-    if (numThreads == 0) numThreads = 1;
+    Utils::threadSafePrint(
+        "Initializing "
+        +
+        std::to_string(itemCount)
+        +
+        " dataset items...",
+        true
+    );
+
+    unsigned int numThreads =
+        std::thread::hardware_concurrency();
+
+    if (numThreads == 0)
+        numThreads = 1;
+
     // Reserve one logical CPU for system responsiveness
-    if (numThreads > 1) numThreads = (std::max)(1u, numThreads - 1u);
-    Utils::threadSafePrint("Using " + std::to_string(numThreads) + " threads for dataset initialization (leaving 1 for system)", true);
+    if (numThreads > 1)
+        numThreads =
+            (std::max)(1u, numThreads - 1u);
 
-    auto start = std::chrono::high_resolution_clock::now();
+    Utils::threadSafePrint(
+        "Using "
+        +
+        std::to_string(numThreads)
+        +
+        " threads for dataset initialization "
+        "(leaving 1 for system)",
+        true
+    );
+
+    auto start =
+        std::chrono::high_resolution_clock::now();
 
     std::vector<std::thread> threads;
-    unsigned long itemsPerThread = itemCount / numThreads;
 
-    for (unsigned int t = 0; t < numThreads; t++) {
-        unsigned long startIndex = t * itemsPerThread;
-        unsigned long count = (t == numThreads - 1) ? (itemCount - startIndex) : itemsPerThread;
-        threads.emplace_back([startIndex, count]() {
-            randomx_init_dataset(dataset, cache, startIndex, count);
-        });
+    unsigned long itemsPerThread =
+        itemCount / numThreads;
+
+    for (unsigned int t = 0;
+         t < numThreads;
+         t++)
+    {
+        unsigned long startIndex =
+            t * itemsPerThread;
+
+        unsigned long count =
+            (t == numThreads - 1)
+            ?
+            (itemCount - startIndex)
+            :
+            itemsPerThread;
+
+        threads.emplace_back(
+            [startIndex, count]()
+            {
+                randomx_init_dataset(
+                    dataset,
+                    cache,
+                    startIndex,
+                    count
+                );
+            }
+        );
     }
-    
-    for (auto& thread : threads) {
+
+    for (auto& thread : threads)
+    {
         thread.join();
     }
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    double seconds = duration.count() / 1000.0;
-    
-    Utils::threadSafePrint("Dataset initialized in " + std::to_string(seconds) + " seconds", true);
-    
+
+    auto end =
+        std::chrono::high_resolution_clock::now();
+
+    auto duration =
+        std::chrono::duration_cast<
+            std::chrono::milliseconds
+        >(end - start);
+
+    double seconds =
+        duration.count() / 1000.0;
+
+    Utils::threadSafePrint(
+        "Dataset initialized in "
+        +
+        std::to_string(seconds)
+        +
+        " seconds",
+        true
+    );
+
     return true;
+
+#endif
 }
 
-bool RandomXManager::initialize(const std::string& seedHash) {
+
+// ============================================================
+// INITIALIZE RANDOMX
+// ============================================================
+
+bool RandomXManager::initialize(
+    const std::string& seedHash
+)
+{
     std::lock_guard<std::mutex> lock(initMutex);
-    
-    if (seedHash == currentSeedHash && cache != nullptr && initialized) {
-        if (useLightMode || dataset != nullptr) {
-            Utils::threadSafePrint("RandomX already initialized for seed hash", true);
+
+    if (
+        seedHash == currentSeedHash &&
+        cache != nullptr &&
+        initialized
+    )
+    {
+        if (
+            useLightMode ||
+            dataset != nullptr
+        )
+        {
+            Utils::threadSafePrint(
+                "RandomX already initialized for seed hash",
+                true
+            );
+
             return true;
         }
     }
 
-    Utils::threadSafePrint("=== INITIALIZING RANDOMX ===", true);
-    Utils::threadSafePrint("Seed hash: " + seedHash, true);
-    
-    if (!initializeCache(seedHash)) {
-        Utils::threadSafePrint("Failed to initialize RandomX cache", true);
-        return false;
-    }
-    
-    // Flags are already set in initializeCache with huge pages and JIT enabled if available
-    
-    if (!useLightMode) {
-        std::string datasetFileName = "randomx_dataset_" + seedHash.substr(0, 16) + ".bin";
-        bool loadedDataset = false;
-        
-        if (std::filesystem::exists(datasetFileName)) {
-            size_t fileSize = std::filesystem::file_size(datasetFileName);
-            
-            unsigned long itemCount = randomx_dataset_item_count();
-            size_t expectedMinSize = static_cast<size_t>(itemCount) * RANDOMX_DATASET_ITEM_SIZE;
-            
-            if (fileSize >= expectedMinSize) {
-                Utils::threadSafePrint("Loading dataset from disk...", true);
-                if (loadDataset(datasetFileName)) {
-                    loadedDataset = true;
-                }
-            } else {
-                std::filesystem::remove(datasetFileName);
-            }
-        }
+    Utils::threadSafePrint(
+        "=== INITIALIZING RANDOMX ===",
+        true
+    );
 
-        if (!loadedDataset) {
-            Utils::threadSafePrint("=== CREATING 2GB RANDOMX DATASET ===", true);
-            if (!createDataset()) {
-                useLightMode = true;
-                flags = cacheAllocFlags;
-            } else {
-                saveDataset(datasetFileName);
-            }
-        }
-    }
+    Utils::threadSafePrint(
+        "Seed hash: " + seedHash,
+        true
+    );
 
-    currentSeedHash = seedHash;
-    initialized = true;
-    
-    // Print XMRig-style summary
-    std::stringstream summary;
-    summary << "RandomX: allocated ";
-    
-    // Calculate total memory (cache + dataset)
-    int cacheSize = 256; // 256 MB cache
-    int datasetSize = useLightMode ? 0 : 2080; // 2080 MB dataset if full mode
-    int totalSize = cacheSize + datasetSize;
-    
-    summary << totalSize << " MB (" << datasetSize << "+" << cacheSize << ")";
-    
-    // Huge pages percentage
-    if (flags & RANDOMX_FLAG_LARGE_PAGES) {
-        summary << " huge pages 100%";
-    } else {
-        summary << " huge pages 0%";
-    }
-    
-    // Show flags
-    if (flags & RANDOMX_FLAG_JIT) {
-        summary << " +JIT";
-    }
-    if (flags & RANDOMX_FLAG_HARD_AES) {
-        summary << " +AES";
-    }
-    if (flags & RANDOMX_FLAG_FULL_MEM) {
-        summary << " +FULL";
-    }
-    
-    Utils::threadSafePrint(summary.str(), true);
-    
-    if (config.debugMode) {
-        Utils::threadSafePrint("=== RANDOMX READY ===", true);
-        Utils::threadSafePrint("Flags: 0x" + Utils::formatHex(static_cast<uint64_t>(flags), 8), true);
-    }
-    
-    return true;
-}
-
-bool RandomXManager::createVM(int threadId)
-{
-    std::unique_lock<std::shared_mutex> lock(vmMutex);
-
-    if (!initialized || cache == nullptr)
+    if (!initializeCache(seedHash))
     {
         Utils::threadSafePrint(
-            "[WASM] ERRO: RandomX não está inicializado ou cache == nullptr",
+            "Failed to initialize RandomX cache",
             true
         );
+
         return false;
     }
 
 #ifdef __EMSCRIPTEN__
 
-    // =========================================================
-    // WASM: SEM DATASET / LIGHT MODE
-    // =========================================================
+    // ========================================================
+    // WASM:
+    // NÃO criar dataset.
+    // ========================================================
 
-    randomx_flags wasmFlags =
-        static_cast<randomx_flags>(flags);
+    useLightMode = true;
 
-    // Nunca permitir FULL_MEM/LARGE_PAGES no WASM
-    wasmFlags = static_cast<randomx_flags>(
-        wasmFlags &
-        ~RANDOMX_FLAG_FULL_MEM &
-        ~RANDOMX_FLAG_LARGE_PAGES
-    );
-
-    // JIT pode ser problemático dependendo da build do RandomX.
-    // Como seu teste atual está sem JIT, mantenha desligado.
-    wasmFlags = static_cast<randomx_flags>(
-        wasmFlags &
-        ~RANDOMX_FLAG_JIT
-    );
+    flags = RANDOMX_FLAG_DEFAULT;
 
     Utils::threadSafePrint(
-        "[WASM] Criando VM LIGHT para thread " +
+        "[WASM] RandomX inicializado em LIGHT MODE",
+        true
+    );
+
+#else
+
+    // ========================================================
+    // DESKTOP:
+    // Dataset normal.
+    // ========================================================
+
+    if (!useLightMode)
+    {
+        std::string datasetFileName =
+            "randomx_dataset_" +
+            seedHash.substr(0, 16) +
+            ".bin";
+
+        bool loadedDataset = false;
+
+        if (std::filesystem::exists(
+                datasetFileName))
+        {
+            size_t fileSize =
+                std::filesystem::file_size(
+                    datasetFileName
+                );
+
+            unsigned long itemCount =
+                randomx_dataset_item_count();
+
+            size_t expectedMinSize =
+                static_cast<size_t>(itemCount)
+                *
+                RANDOMX_DATASET_ITEM_SIZE;
+
+            if (fileSize >= expectedMinSize)
+            {
+                Utils::threadSafePrint(
+                    "Loading dataset from disk...",
+                    true
+                );
+
+                if (loadDataset(
+                        datasetFileName))
+                {
+                    loadedDataset = true;
+                }
+            }
+            else
+            {
+                std::filesystem::remove(
+                    datasetFileName
+                );
+            }
+        }
+
+        if (!loadedDataset)
+        {
+            Utils::threadSafePrint(
+                "=== CREATING 2GB RANDOMX DATASET ===",
+                true
+            );
+
+            if (!createDataset())
+            {
+                useLightMode = true;
+                flags = cacheAllocFlags;
+            }
+            else
+            {
+                saveDataset(datasetFileName);
+            }
+        }
+    }
+
+#endif
+
+    currentSeedHash = seedHash;
+
+    initialized = true;
+
+    // ========================================================
+    // Summary
+    // ========================================================
+
+    std::stringstream summary;
+
+    summary << "RandomX: allocated ";
+
+#ifdef __EMSCRIPTEN__
+
+    int cacheSize = 256;
+    int datasetSize = 0;
+
+#else
+
+    int cacheSize = 256;
+    int datasetSize =
+        useLightMode
+        ?
+        0
+        :
+        2080;
+
+#endif
+
+    int totalSize =
+        cacheSize +
+        datasetSize;
+
+    summary
+        << totalSize
+        << " MB ("
+        << datasetSize
+        << "+"
+        << cacheSize
+        << ")";
+
+    if (
+        flags &
+        RANDOMX_FLAG_LARGE_PAGES
+    )
+    {
+        summary << " huge pages 100%";
+    }
+    else
+    {
+        summary << " huge pages 0%";
+    }
+
+    if (
+        flags &
+        RANDOMX_FLAG_JIT
+    )
+    {
+        summary << " +JIT";
+    }
+
+    if (
+        flags &
+        RANDOMX_FLAG_HARD_AES
+    )
+    {
+        summary << " +AES";
+    }
+
+    if (
+        flags &
+        RANDOMX_FLAG_FULL_MEM
+    )
+    {
+        summary << " +FULL";
+    }
+
+    Utils::threadSafePrint(
+        summary.str(),
+        true
+    );
+
+    if (config.debugMode)
+    {
+        Utils::threadSafePrint(
+            "=== RANDOMX READY ===",
+            true
+        );
+
+        Utils::threadSafePrint(
+            "Flags: 0x"
+            +
+            Utils::formatHex(
+                static_cast<uint64_t>(flags),
+                8
+            ),
+            true
+        );
+    }
+
+    return true;
+}
+
+
+// ============================================================
+// CREATE VM
+// ============================================================
+
+bool RandomXManager::createVM(int threadId)
+{
+    std::unique_lock<std::shared_mutex> lock(
+        vmMutex
+    );
+
+    if (!initialized || cache == nullptr)
+    {
+        Utils::threadSafePrint(
+            "[WASM] ERRO: RandomX não está inicializado "
+            "ou cache == nullptr",
+            true
+        );
+
+        return false;
+    }
+
+    // ========================================================
+    // Já existe VM para esta thread?
+    // ========================================================
+
+    auto existing =
+        vms.find(threadId);
+
+    if (
+        existing != vms.end() &&
+        existing->second != nullptr
+    )
+    {
+        Utils::threadSafePrint(
+            "[RandomX] VM já existe para thread "
+            +
+            std::to_string(threadId),
+            true
+        );
+
+        return true;
+    }
+
+#ifdef __EMSCRIPTEN__
+
+    // ========================================================
+    // WASM
+    //
+    // LIGHT MODE
+    // SEM DATASET
+    // SEM FULL_MEM
+    // SEM LARGE_PAGES
+    // SEM JIT
+    // ========================================================
+
+    randomx_flags wasmFlags =
+        RANDOMX_FLAG_DEFAULT;
+
+    Utils::threadSafePrint(
+        "[WASM] Criando VM LIGHT para thread "
+        +
         std::to_string(threadId),
         true
     );
 
     Utils::threadSafePrint(
-        "[WASM] VM flags: 0x" +
+        "[WASM] VM flags: 0x"
+        +
         Utils::formatHex(
             static_cast<uint64_t>(wasmFlags),
             8
@@ -516,25 +802,53 @@ bool RandomXManager::createVM(int threadId)
         true
     );
 
-    randomx_vm* vm = randomx_create_vm(
-        wasmFlags,
-        cache,
-        nullptr
+    Utils::threadSafePrint(
+        "[WASM] Cache: "
+        +
+        std::string(
+            cache != nullptr
+            ?
+            "OK"
+            :
+            "NULL"
+        ),
+        true
     );
+
+    Utils::threadSafePrint(
+        "[WASM] Dataset: NONE",
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] Chamando randomx_create_vm()...",
+        true
+    );
+
+    randomx_vm* vm =
+        randomx_create_vm(
+            wasmFlags,
+            cache,
+            nullptr
+        );
 
     if (vm == nullptr)
     {
         Utils::threadSafePrint(
-            "[WASM] ERRO: randomx_create_vm() retornou nullptr",
+            "[WASM] ERRO: randomx_create_vm() "
+            "retornou nullptr",
             true
         );
+
         return false;
     }
 
     vms[threadId] = vm;
 
     Utils::threadSafePrint(
-        "[WASM] VM LIGHT criada com sucesso para thread " +
+        "[WASM] VM LIGHT criada com sucesso "
+        "para thread "
+        +
         std::to_string(threadId),
         true
     );
@@ -543,31 +857,33 @@ bool RandomXManager::createVM(int threadId)
 
 #else
 
-    // =========================================================
-    // DESKTOP: comportamento normal
-    // =========================================================
+    // ========================================================
+    // DESKTOP
+    // ========================================================
 
-    if (!useLightMode && dataset == nullptr)
+    if (
+        !useLightMode &&
+        dataset == nullptr
+    )
     {
         Utils::threadSafePrint(
             "Cannot create VM: dataset required for full mode",
             true
         );
+
         return false;
     }
 
-    auto it = vms.find(threadId);
-
-    if (it != vms.end() && it->second != nullptr)
-    {
-        return true;
-    }
-
-    randomx_vm* vm = randomx_create_vm(
-        static_cast<randomx_flags>(flags),
-        cache,
-        useLightMode ? nullptr : dataset
-    );
+    randomx_vm* vm =
+        randomx_create_vm(
+            static_cast<randomx_flags>(flags),
+            cache,
+            useLightMode
+                ?
+                nullptr
+                :
+                dataset
+        );
 
     if (vm == nullptr)
     {
@@ -575,6 +891,7 @@ bool RandomXManager::createVM(int threadId)
             "VM creation failed",
             true
         );
+
         return false;
     }
 
@@ -585,278 +902,806 @@ bool RandomXManager::createVM(int threadId)
 #endif
 }
 
-bool RandomXManager::initializeVM(int threadId) {
-    if (!initialized) return false;
+
+// ============================================================
+// INITIALIZE VM
+// ============================================================
+
+bool RandomXManager::initializeVM(int threadId)
+{
+    if (!initialized)
+        return false;
+
     return createVM(threadId);
 }
 
-randomx_vm* RandomXManager::getVM(int threadId) {
-    std::shared_lock<std::shared_mutex> lock(vmMutex);
-    auto it = vms.find(threadId);
-    return (it != vms.end()) ? it->second : nullptr;
+
+// ============================================================
+// GET VM
+// ============================================================
+
+randomx_vm* RandomXManager::getVM(int threadId)
+{
+    std::shared_lock<std::shared_mutex> lock(
+        vmMutex
+    );
+
+    auto it =
+        vms.find(threadId);
+
+    return
+        (it != vms.end())
+        ?
+        it->second
+        :
+        nullptr;
 }
 
-bool RandomXManager::loadDataset(const std::string& filename) {
-    unsigned long itemCount = randomx_dataset_item_count();
-    size_t actualDatasetSize = static_cast<size_t>(itemCount) * RANDOMX_DATASET_ITEM_SIZE;
-    
-    if (!dataset) {
-        dataset = randomx_alloc_dataset(static_cast<randomx_flags>(flags));
-        if (!dataset) return false;
+
+// ============================================================
+// LOAD DATASET
+// ============================================================
+
+bool RandomXManager::loadDataset(
+    const std::string& filename
+)
+{
+#ifdef __EMSCRIPTEN__
+
+    Utils::threadSafePrint(
+        "[WASM] loadDataset() ignorado",
+        true
+    );
+
+    return false;
+
+#else
+
+    unsigned long itemCount =
+        randomx_dataset_item_count();
+
+    size_t actualDatasetSize =
+        static_cast<size_t>(itemCount)
+        *
+        RANDOMX_DATASET_ITEM_SIZE;
+
+    if (!dataset)
+    {
+        dataset =
+            randomx_alloc_dataset(
+                static_cast<randomx_flags>(
+                    flags
+                )
+            );
+
+        if (!dataset)
+            return false;
     }
 
-    std::ifstream file(filename, std::ios::binary);
-    if (!file.is_open()) return false;
+    std::ifstream file(
+        filename,
+        std::ios::binary
+    );
 
-    void* datasetMemory = randomx_get_dataset_memory(dataset);
-    if (!datasetMemory) { file.close(); return false; }
+    if (!file.is_open())
+        return false;
 
-    file.read(reinterpret_cast<char*>(datasetMemory), actualDatasetSize);
+    void* datasetMemory =
+        randomx_get_dataset_memory(
+            dataset
+        );
+
+    if (!datasetMemory)
+    {
+        file.close();
+        return false;
+    }
+
+    file.read(
+        reinterpret_cast<char*>(
+            datasetMemory
+        ),
+        actualDatasetSize
+    );
+
+    bool success =
+        file.good() ||
+        file.eof();
+
     file.close();
-    return true;
+
+    return success;
+
+#endif
 }
 
-bool RandomXManager::saveDataset(const std::string& filename) {
-    if (!dataset) return false;
 
-    unsigned long itemCount = randomx_dataset_item_count();
-    size_t actualDatasetSize = static_cast<size_t>(itemCount) * RANDOMX_DATASET_ITEM_SIZE;
+// ============================================================
+// SAVE DATASET
+// ============================================================
 
-    std::ofstream file(filename, std::ios::binary);
-    if (!file.is_open()) return false;
+bool RandomXManager::saveDataset(
+    const std::string& filename
+)
+{
+#ifdef __EMSCRIPTEN__
 
-    void* datasetMemory = randomx_get_dataset_memory(dataset);
-    if (!datasetMemory) { file.close(); return false; }
+    return false;
 
-    file.write(reinterpret_cast<const char*>(datasetMemory), actualDatasetSize);
+#else
+
+    if (!dataset)
+        return false;
+
+    unsigned long itemCount =
+        randomx_dataset_item_count();
+
+    size_t actualDatasetSize =
+        static_cast<size_t>(itemCount)
+        *
+        RANDOMX_DATASET_ITEM_SIZE;
+
+    std::ofstream file(
+        filename,
+        std::ios::binary
+    );
+
+    if (!file.is_open())
+        return false;
+
+    void* datasetMemory =
+        randomx_get_dataset_memory(
+            dataset
+        );
+
+    if (!datasetMemory)
+    {
+        file.close();
+        return false;
+    }
+
+    file.write(
+        reinterpret_cast<const char*>(
+            datasetMemory
+        ),
+        actualDatasetSize
+    );
+
     file.close();
+
     return true;
+
+#endif
 }
 
-void RandomXManager::cleanupVM(int threadId) {
-    std::unique_lock<std::shared_mutex> lock(vmMutex);
-    auto it = vms.find(threadId);
-    if (it != vms.end() && it->second) {
-        randomx_destroy_vm(it->second);
+
+// ============================================================
+// CLEANUP VM
+// ============================================================
+
+void RandomXManager::cleanupVM(
+    int threadId
+)
+{
+    std::unique_lock<std::shared_mutex> lock(
+        vmMutex
+    );
+
+    auto it =
+        vms.find(threadId);
+
+    if (
+        it != vms.end() &&
+        it->second
+    )
+    {
+        randomx_destroy_vm(
+            it->second
+        );
+
         vms.erase(it);
     }
 }
 
-void RandomXManager::destroyVM(randomx_vm* vm) {
-    if (!vm) return;
-    std::unique_lock<std::shared_mutex> lock(vmMutex);
-    for (auto it = vms.begin(); it != vms.end(); ++it) {
-        if (it->second == vm) {
+
+// ============================================================
+// DESTROY VM
+// ============================================================
+
+void RandomXManager::destroyVM(
+    randomx_vm* vm
+)
+{
+    if (!vm)
+        return;
+
+    std::unique_lock<std::shared_mutex> lock(
+        vmMutex
+    );
+
+    for (
+        auto it = vms.begin();
+        it != vms.end();
+        ++it
+    )
+    {
+        if (it->second == vm)
+        {
             randomx_destroy_vm(vm);
+
             vms.erase(it);
+
             break;
         }
     }
 }
 
-void RandomXManager::cleanup() {
-    std::lock_guard<std::mutex> lock(initMutex);
+
+// ============================================================
+// CLEANUP
+// ============================================================
+
+void RandomXManager::cleanup()
+{
+    std::lock_guard<std::mutex> lock(
+        initMutex
+    );
+
     {
-        std::unique_lock<std::shared_mutex> vmLock(vmMutex);
-        for (auto& [threadId, vm] : vms) {
-            if (vm) randomx_destroy_vm(vm);
+        std::unique_lock<std::shared_mutex> vmLock(
+            vmMutex
+        );
+
+        for (auto& [threadId, vm] : vms)
+        {
+            (void)threadId;
+
+            if (vm)
+            {
+                randomx_destroy_vm(vm);
+            }
         }
+
         vms.clear();
     }
-    if (cache) { randomx_release_cache(cache); cache = nullptr; }
-    if (dataset) { randomx_release_dataset(dataset); dataset = nullptr; }
+
+    if (cache)
+    {
+        randomx_release_cache(cache);
+        cache = nullptr;
+    }
+
+#ifndef __EMSCRIPTEN__
+
+    if (dataset)
+    {
+        randomx_release_dataset(dataset);
+        dataset = nullptr;
+    }
+
+#else
+
+    dataset = nullptr;
+
+#endif
+
     initialized = false;
+
     currentSeedHash.clear();
 }
 
-bool RandomXManager::setTargetAndDifficulty(const std::string& targetHex) {
-    if (targetHex.length() != 8) {
+
+// ============================================================
+// SET TARGET / DIFFICULTY
+// ============================================================
+
+bool RandomXManager::setTargetAndDifficulty(
+    const std::string& targetHex
+)
+{
+    if (targetHex.length() != 8)
+    {
         return false;
     }
-    
-    try {
-        std::lock_guard<std::mutex> lock(targetMutex);
-        
-        // Parse 4-byte compact target
-        std::vector<uint8_t> targetBytes = Utils::hexToBytes(targetHex);
-        uint32_t compactTarget = 0;
-        for (size_t i = 0; i < 4; i++) {
-            compactTarget |= static_cast<uint32_t>(targetBytes[i]) << (i * 8);
+
+    try
+    {
+        std::lock_guard<std::mutex> lock(
+            targetMutex
+        );
+
+        std::vector<uint8_t> targetBytes =
+            Utils::hexToBytes(targetHex);
+
+        if (targetBytes.size() < 4)
+        {
+            return false;
         }
-        
-        if (compactTarget == 0) compactTarget = 1;
-        
-        // Calculate difficulty
-        currentDifficulty = static_cast<double>(0xFFFFFFFFULL) / static_cast<double>(compactTarget);
-        
-        // Calculate 256-bit target
-        uint64_t diff64 = static_cast<uint64_t>(currentDifficulty);
-        
-        expandedTarget.data[0] = 0xFFFFFFFFFFFFFFFFULL / diff64;
+
+        uint32_t compactTarget = 0;
+
+        for (size_t i = 0; i < 4; i++)
+        {
+            compactTarget |=
+                static_cast<uint32_t>(
+                    targetBytes[i]
+                )
+                <<
+                (i * 8);
+        }
+
+        if (compactTarget == 0)
+        {
+            compactTarget = 1;
+        }
+
+        currentDifficulty =
+            static_cast<double>(
+                0xFFFFFFFFULL
+            )
+            /
+            static_cast<double>(
+                compactTarget
+            );
+
+        uint64_t diff64 =
+            static_cast<uint64_t>(
+                currentDifficulty
+            );
+
+        if (diff64 == 0)
+        {
+            diff64 = 1;
+        }
+
+        expandedTarget.data[0] =
+            0xFFFFFFFFFFFFFFFFULL /
+            diff64;
+
         expandedTarget.data[1] = 0;
         expandedTarget.data[2] = 0;
         expandedTarget.data[3] = 0;
-        
-        if (config.debugMode) {
+
+        if (config.debugMode)
+        {
             std::stringstream ss;
-            ss << "[TARGET] 0x" << std::hex << compactTarget 
-               << " -> Diff:" << std::dec << diff64
-               << " -> Target[0]=0x" << std::hex << std::setw(16) << std::setfill('0') 
-               << expandedTarget.data[0];
-            Utils::threadSafePrint(ss.str(), true);
+
+            ss
+                << "[TARGET] 0x"
+                << std::hex
+                << compactTarget
+                << " -> Diff:"
+                << std::dec
+                << diff64
+                << " -> Target[0]=0x"
+                << std::hex
+                << std::setw(16)
+                << std::setfill('0')
+                << expandedTarget.data[0];
+
+            Utils::threadSafePrint(
+                ss.str(),
+                true
+            );
         }
-        
+
         return true;
     }
-    catch (const std::exception& e) {
-        Utils::threadSafePrint("Error parsing target: " + std::string(e.what()), true);
+    catch (const std::exception& e)
+    {
+        Utils::threadSafePrint(
+            "Error parsing target: "
+            +
+            std::string(e.what()),
+            true
+        );
+
         return false;
     }
 }
 
-bool RandomXManager::checkTarget(const uint8_t* hash) {
-    if (!hash) return false;
-    
-    // Convert hash bytes to uint256_t (little-endian)
+
+// ============================================================
+// CHECK TARGET
+// ============================================================
+
+bool RandomXManager::checkTarget(
+    const uint8_t* hash
+)
+{
+    if (!hash)
+        return false;
+
     uint256_t hashValue;
-    for (int wordIdx = 0; wordIdx < 4; wordIdx++) {
+
+    for (int wordIdx = 0;
+         wordIdx < 4;
+         wordIdx++)
+    {
         uint64_t word = 0;
-        int baseByteIdx = wordIdx * 8;
-        for (int byteInWord = 0; byteInWord < 8; byteInWord++) {
-            word |= static_cast<uint64_t>(hash[baseByteIdx + byteInWord]) << (byteInWord * 8);
+
+        int baseByteIdx =
+            wordIdx * 8;
+
+        for (int byteInWord = 0;
+             byteInWord < 8;
+             byteInWord++)
+        {
+            word |=
+                static_cast<uint64_t>(
+                    hash[
+                        baseByteIdx +
+                        byteInWord
+                    ]
+                )
+                <<
+                (byteInWord * 8);
         }
-        hashValue.data[wordIdx] = word;
+
+        hashValue.data[wordIdx] =
+            word;
     }
-    
-    // Compare 256-bit values (MSW to LSW)
-    for (int i = 3; i >= 0; i--) {
-        if (hashValue.data[i] < expandedTarget.data[i]) {
-            // Valid share found!
-            std::lock_guard<std::mutex> lock(hashMutex);
-            lastHash.assign(hash, hash + RANDOMX_HASH_SIZE);
-            
+
+    // Compare MSW -> LSW
+    for (int i = 3;
+         i >= 0;
+         i--)
+    {
+        if (
+            hashValue.data[i]
+            <
+            expandedTarget.data[i]
+        )
+        {
+            std::lock_guard<std::mutex> lock(
+                hashMutex
+            );
+
+            lastHash.assign(
+                hash,
+                hash + RANDOMX_HASH_SIZE
+            );
+
             std::stringstream ss;
-            ss << "\n*** VALID SHARE FOUND ***\n";
-            ss << "Hash (LE):   ";
-            for (int w = 0; w < 4; w++) {
-                ss << std::hex << std::setw(16) << std::setfill('0') << hashValue.data[w];
+
+            ss
+                << "\n*** VALID SHARE FOUND ***\n";
+
+            ss
+                << "Hash (LE):   ";
+
+            for (int w = 0;
+                 w < 4;
+                 w++)
+            {
+                ss
+                    << std::hex
+                    << std::setw(16)
+                    << std::setfill('0')
+                    << hashValue.data[w];
             }
-            ss << "\nTarget (LE): ";
-            for (int w = 0; w < 4; w++) {
-                ss << std::hex << std::setw(16) << std::setfill('0') << expandedTarget.data[w];
+
+            ss
+                << "\nTarget (LE): ";
+
+            for (int w = 0;
+                 w < 4;
+                 w++)
+            {
+                ss
+                    << std::hex
+                    << std::setw(16)
+                    << std::setfill('0')
+                    << expandedTarget.data[w];
             }
-            ss << "\nFull hash: " << Utils::bytesToHex(hash, 32);
-            Utils::threadSafePrint(ss.str(), true);
-            
+
+            ss
+                << "\nFull hash: "
+                << Utils::bytesToHex(
+                    hash,
+                    32
+                );
+
+            Utils::threadSafePrint(
+                ss.str(),
+                true
+            );
+
             return true;
         }
-        if (hashValue.data[i] > expandedTarget.data[i]) {
+
+        if (
+            hashValue.data[i]
+            >
+            expandedTarget.data[i]
+        )
+        {
             return false;
         }
-        // Equal, continue to next word
     }
-    
-    // All words equal - valid (hash == target)
+
     return true;
 }
 
-std::vector<uint8_t> RandomXManager::getLastHash() {
-    std::lock_guard<std::mutex> lock(hashMutex);
+
+// ============================================================
+// GET LAST HASH
+// ============================================================
+
+std::vector<uint8_t>
+RandomXManager::getLastHash()
+{
+    std::lock_guard<std::mutex> lock(
+        hashMutex
+    );
+
     return lastHash;
 }
 
-std::string RandomXManager::getLastHashHex() {
-    std::lock_guard<std::mutex> lock(hashMutex);
+
+// ============================================================
+// GET LAST HASH HEX
+// ============================================================
+
+std::string
+RandomXManager::getLastHashHex()
+{
+    std::lock_guard<std::mutex> lock(
+        hashMutex
+    );
+
     std::stringstream ss;
-    ss << std::hex << std::setfill('0');
-    for (uint8_t byte : lastHash) {
-        ss << std::setw(2) << static_cast<int>(byte);
+
+    ss
+        << std::hex
+        << std::setfill('0');
+
+    for (uint8_t byte : lastHash)
+    {
+        ss
+            << std::setw(2)
+            << static_cast<int>(byte);
     }
+
     return ss.str();
 }
 
-randomx_dataset* RandomXManager::getDataset() {
+
+// ============================================================
+// GET DATASET
+// ============================================================
+
+randomx_dataset*
+RandomXManager::getDataset()
+{
     return dataset;
 }
 
-randomx_cache* RandomXManager::getCache() {
+
+// ============================================================
+// GET CACHE
+// ============================================================
+
+randomx_cache*
+RandomXManager::getCache()
+{
     return cache;
 }
 
-randomx_flags RandomXManager::getVMFlags() {
-    return static_cast<randomx_flags>(flags);
+
+// ============================================================
+// GET VM FLAGS
+// ============================================================
+
+randomx_flags
+RandomXManager::getVMFlags()
+{
+    return static_cast<randomx_flags>(
+        flags
+    );
 }
 
-void RandomXManager::handleSeedHashChange(const std::string& newSeedHash) {
-    std::lock_guard<std::mutex> lock(seedHashMutex);
-    if (newSeedHash != currentSeedHash) {
+
+// ============================================================
+// HANDLE SEED HASH CHANGE
+// ============================================================
+
+void RandomXManager::handleSeedHashChange(
+    const std::string& newSeedHash
+)
+{
+    std::lock_guard<std::mutex> lock(
+        seedHashMutex
+    );
+
+    if (newSeedHash != currentSeedHash)
+    {
         {
-            std::unique_lock<std::shared_mutex> vmLock(vmMutex);
-            for (auto& [threadId, vm] : vms) {
-                if (vm) randomx_destroy_vm(vm);
+            std::unique_lock<std::shared_mutex> vmLock(
+                vmMutex
+            );
+
+            for (
+                auto& [threadId, vm] : vms
+            )
+            {
+                (void)threadId;
+
+                if (vm)
+                {
+                    randomx_destroy_vm(vm);
+                }
             }
+
             vms.clear();
         }
+
         initialize(newSeedHash);
     }
 }
 
-bool RandomXManager::calculateHashForThread(int threadId, const std::vector<uint8_t>& input, uint64_t nonce) {
-    // Note: nonce parameter kept for API compatibility but not used
-    // The nonce is already embedded in the input blob by the calling code
-    (void)nonce; // Suppress unused parameter warning
-    
+
+// ============================================================
+// CALCULATE HASH
+// ============================================================
+
+bool RandomXManager::calculateHashForThread(
+    int threadId,
+    const std::vector<uint8_t>& input,
+    uint64_t nonce
+)
+{
+    // Nonce mantido apenas para compatibilidade
+    // com a API atual.
+    (void)nonce;
+
     randomx_vm* vm = nullptr;
+
     {
-        std::shared_lock<std::shared_mutex> vmLock(vmMutex);
-        auto it = vms.find(threadId);
-        if (it == vms.end() || !it->second) return false;
+        std::shared_lock<std::shared_mutex> vmLock(
+            vmMutex
+        );
+
+        auto it =
+            vms.find(threadId);
+
+        if (
+            it == vms.end() ||
+            !it->second
+        )
+        {
+            return false;
+        }
+
         vm = it->second;
     }
-    
-    if (!initialized || input.empty() || input.size() > MAX_BLOB_SIZE) return false;
-    
-    alignas(64) uint8_t blob[MAX_BLOB_SIZE];
-    alignas(64) uint8_t hash[RANDOMX_HASH_SIZE];
-    
-    // CRITICAL FIX: DON'T insert nonce - it's already in the input blob!
-    // The calling code (MoneroMiner.cpp) already wrote the nonce to the blob
-    memcpy(blob, input.data(), input.size());
-    
-    // Calculate hash directly
-    randomx_calculate_hash(vm, blob, input.size(), hash);
-    
-    // Debug logging (only every 10000th hash)
-    static std::atomic<uint64_t> hashCounter{0};
-    uint64_t count = hashCounter.fetch_add(1);
-    
-    if (config.debugMode && (count % 10000 == 0)) {
+
+    if (
+        !initialized ||
+        input.empty() ||
+        input.size() > MAX_BLOB_SIZE
+    )
+    {
+        return false;
+    }
+
+    alignas(64)
+    uint8_t blob[MAX_BLOB_SIZE];
+
+    alignas(64)
+    uint8_t hash[RANDOMX_HASH_SIZE];
+
+    // O nonce já está no blob.
+    memcpy(
+        blob,
+        input.data(),
+        input.size()
+    );
+
+    randomx_calculate_hash(
+        vm,
+        blob,
+        input.size(),
+        hash
+    );
+
+    static std::atomic<uint64_t>
+        hashCounter{0};
+
+    uint64_t count =
+        hashCounter.fetch_add(1);
+
+    if (
+        config.debugMode &&
+        (count % 10000 == 0)
+    )
+    {
         std::stringstream ss;
-        ss << "\n[RandomX] Hash #" << count;
-        ss << "\n  Input blob (first 50 bytes): ";
-        for (size_t i = 0; i < 50 && i < input.size(); i++) {
-            ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(input[i]) << " ";
+
+        ss
+            << "\n[RandomX] Hash #"
+            << count;
+
+        ss
+            << "\n  Input blob "
+               "(first 50 bytes): ";
+
+        for (
+            size_t i = 0;
+            i < 50 &&
+            i < input.size();
+            i++
+        )
+        {
+            ss
+                << std::hex
+                << std::setw(2)
+                << std::setfill('0')
+                << static_cast<int>(
+                    input[i]
+                )
+                << " ";
         }
-        ss << "\n  Hash LSW: 0x" << std::hex << std::setw(16) << std::setfill('0');
+
+        ss
+            << "\n  Hash LSW: 0x"
+            << std::hex
+            << std::setw(16)
+            << std::setfill('0');
+
         uint64_t hashLSW = 0;
-        for (int i = 0; i < 8; i++) {
-            hashLSW |= static_cast<uint64_t>(hash[i]) << (i * 8);
+
+        for (int i = 0;
+             i < 8;
+             i++)
+        {
+            hashLSW |=
+                static_cast<uint64_t>(
+                    hash[i]
+                )
+                <<
+                (i * 8);
         }
+
         ss << hashLSW;
-        ss << " | Target LSW: 0x" << std::hex << std::setw(16) << std::setfill('0') << expandedTarget.data[0];
-        Utils::threadSafePrint(ss.str(), true);
+
+        ss
+            << " | Target LSW: 0x"
+            << std::hex
+            << std::setw(16)
+            << std::setfill('0')
+            << expandedTarget.data[0];
+
+        Utils::threadSafePrint(
+            ss.str(),
+            true
+        );
     }
-    
-    bool wouldBeValid = checkTarget(hash);
-    
-    if (wouldBeValid) {
-        Utils::threadSafePrint("\n!!! VALID SHARE DETECTED !!!", true);
+
+    bool wouldBeValid =
+        checkTarget(hash);
+
+    if (wouldBeValid)
+    {
+        Utils::threadSafePrint(
+            "\n!!! VALID SHARE DETECTED !!!",
+            true
+        );
     }
-    
+
     return wouldBeValid;
 }
 
-double RandomXManager::getDifficulty() {
-    std::lock_guard<std::mutex> lock(targetMutex);
+
+// ============================================================
+// GET DIFFICULTY
+// ============================================================
+
+double RandomXManager::getDifficulty()
+{
+    std::lock_guard<std::mutex> lock(
+        targetMutex
+    );
+
     return currentDifficulty;
 }
