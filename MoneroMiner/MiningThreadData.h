@@ -12,14 +12,13 @@ public:
 
     bool initializeVM();
     bool calculateHash(const std::vector<uint8_t>& input, uint64_t nonce);
-    
-    // CRITICAL: New method for proper hash calculation with target checking
+
     bool calculateHashAndCheckTarget(
         const std::vector<uint8_t>& blob,
         const std::vector<uint8_t>& target,
         std::vector<uint8_t>& hashOut
     );
-    
+
     int getThreadId() const { return threadId; }
     void setHashrate(double rate) { hashrate.store(rate); }
     double getHashrate() const { return hashrate.load(); }
@@ -36,6 +35,7 @@ private:
     int threadId;
     std::atomic<double> hashrate{0.0};
     std::atomic<uint64_t> hashCount{0};
+    std::atomic<uint64_t> totalHashes{0};
     std::atomic<uint64_t> acceptedShares{0};
     std::atomic<uint64_t> rejectedShares{0};
     randomx_vm* vm = nullptr;
