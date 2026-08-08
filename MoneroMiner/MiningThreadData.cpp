@@ -10,9 +10,13 @@
 #include <cstdint>
 #include <sstream>
 #include <iomanip>
+#include <string>
 
-MiningThreadData::MiningThreadData(int id) : threadId(id) {
+namespace PoolClient {
+extern std::string currentSeedHash;
 }
+
+MiningThreadData::MiningThreadData(int id) : threadId(id) {}
 
 MiningThreadData::~MiningThreadData() {
     RandomXManager::cleanupVM(threadId);
@@ -20,30 +24,44 @@ MiningThreadData::~MiningThreadData() {
 }
 
 bool MiningThreadData::initializeVM() {
-    if (vm != nullptr) {
-        return true;
-    }
+    const std::string& seedHash = PoolClient::currentSeedHash;
 
-    if (!RandomXManager::isInitialized()) {
+    if (seedHash.empty()) {
         Utils::threadSafePrint(
             "[RandomX] Thread " + std::to_string(threadId) +
-            ": manager not initialized",
-            true
-        );
+            ": current job has no seed hash", true);
         return false;
     }
 
     Utils::threadSafePrint(
+        "[RandomX] Thread " + std::to_string(threadId) +
+        ": ensuring manager is initialized for seed " + seedHash, true);
+
+    if (!RandomXManager::isInitialized() ||
+        RandomXManager::getCurrentSeedHash() != seedHash) {
+        Utils::threadSafePrint(
+            "[RandomX] Thread " + std::to_string(threadId) +
+            ": initializing RandomX manager", true);
+
+        if (!RandomXManager::initialize(seedHash)) {
+            Utils::threadSafePrint(
+                "[RandomX] Thread " + std::to_string(threadId) +
+                ": RandomXManager::initialize() failed", true);
+            return false;
+        }
+    }
+
+    if (vm != nullptr)
+        return true;
+
+    Utils::threadSafePrint(
         "[WASM-DEBUG] >>> initializeVM(" + std::to_string(threadId) + ") ENTROU",
-        true
-    );
+        true);
 
     if (!RandomXManager::initializeVM(threadId)) {
         Utils::threadSafePrint(
             "[RandomX] Thread " + std::to_string(threadId) +
-            ": initializeVM() failed",
-            true
-        );
+            ": initializeVM() failed", true);
         return false;
     }
 
@@ -52,16 +70,12 @@ bool MiningThreadData::initializeVM() {
     if (!vm) {
         Utils::threadSafePrint(
             "[RandomX] Thread " + std::to_string(threadId) +
-            ": VM lookup returned NULL",
-            true
-        );
+            ": VM lookup returned NULL", true);
         return false;
     }
 
     Utils::threadSafePrint(
-        "[RandomX] Thread " + std::to_string(threadId) + ": VM ready",
-        true
-    );
+        "[RandomX] Thread " + std::to_string(threadId) + ": VM ready", true);
 
     return true;
 }
@@ -80,42 +94,28 @@ bool MiningThreadData::calculateHashAndCheckTarget(
     if (!vm) {
         Utils::threadSafePrint(
             "[RandomX] T" + std::to_string(threadId) +
-            ": calculateHash called without VM",
-            true
-        );
+            ": calculateHash called without VM", true);
         return false;
     }
 
     if (blob.empty() || blob.size() > 128) {
         Utils::threadSafePrint(
             "[RandomX] T" + std::to_string(threadId) +
-            ": invalid blob size " + std::to_string(blob.size()),
-            true
-        );
+            ": invalid blob size " + std::to_string(blob.size()), true);
         return false;
     }
 
     if (targetBytes.size() != 32) {
         Utils::threadSafePrint(
             "[RandomX] T" + std::to_string(threadId) +
-            ": invalid target size " + std::to_string(targetBytes.size()),
-            true
-        );
+            ": invalid target size " + std::to_string(targetBytes.size()), true);
         return false;
     }
 
-    if (hashOut.size() < RANDOMX_HASH_SIZE) {
+    if (hashOut.size() < RANDOMX_HASH_SIZE)
         hashOut.resize(RANDOMX_HASH_SIZE);
-    }
 
-    // Keep the VM owned exclusively by this mining worker.
-    // Do not access another worker's VM or the manager's mutable lastHash here.
-    randomx_calculate_hash(
-        vm,
-        blob.data(),
-        blob.size(),
-        hashOut.data()
-    );
+    randomx_calculate_hash(vm, blob.data(), blob.size(), hashOut.data());
 
     totalHashes++;
 
@@ -129,11 +129,8 @@ bool MiningThreadData::calculateHashAndCheckTarget(
         ss << "  Hash:   " << hashValue.toHex() << "\n";
         ss << "  Target: " << targetValue.toHex() << "\n";
         ss << "  Result: " << (isValid ? "VALID SHARE FOUND!" : "does not meet target");
-
-        if (isValid) {
+        if (isValid)
             ss << "\n  >>> SUBMITTING SHARE <<<";
-        }
-
         Utils::threadSafePrint(ss.str(), true);
     }
 
