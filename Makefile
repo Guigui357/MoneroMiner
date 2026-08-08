@@ -4,12 +4,15 @@
 CXX = em++
 CC = emcc
 
-# Otimizações pesadas para WebAssembly e SIMD de 128 bits para o RandomX
+# WebAssembly pthreads are required because the miner creates std::thread workers.
+# SIMD is kept enabled; RandomX is built as generic for browser portability.
 CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 CFLAGS = -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 
 EMSCRIPTEN_FLAGS = \
     -s WASM=1 \
+    -s USE_PTHREADS=1 \
+    -s PTHREAD_POOL_SIZE=4 \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s INITIAL_MEMORY=1073741824 \
     -s MAXIMUM_MEMORY=2147483648 \
@@ -21,7 +24,6 @@ EMSCRIPTEN_FLAGS = \
 
 LDFLAGS = $(EMSCRIPTEN_FLAGS)
 
-# Directories
 SRC_DIR = MoneroMiner
 BUILD_DIR = build
 BIN_DIR = bin
@@ -34,24 +36,16 @@ RANDOMX_BUILD = $(RANDOMX_DIR)/build
 RANDOMX_SRC_ABS := $(shell cd $(RANDOMX_DIR) && pwd)
 RANDOMX_CACHE := $(RANDOMX_BUILD)/CMakeCache.txt
 
-# CORREÇÃO: Include paths corrigidos (removido o arquivo .h do escopo de inclusão de diretório)
 INCLUDES = -I$(SRC_DIR) -I$(RANDOMX_DIR)/src
 
-# CORREÇÃO: Mantemos o PoolClient.cpp e MiningThread.cpp originais/adaptados na compilação.
-# Removemos apenas o framework nativo do Windows/Linux (pch, framework e main legada).
 SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
 SOURCES := $(filter-out $(SRC_DIR)/framework.cpp \
                         $(SRC_DIR)/pch.cpp \
                         $(SRC_DIR)/main.cpp, $(SOURCES))
 
 OBJECTS = $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SOURCES))
-
 TARGET = $(BIN_DIR)/miner.js
 RANDOMX_LIB = $(RANDOMX_BUILD)/librandomx.a
-
-# =========================================================================
-# REGRAS DE COMPILAÇÃO E DEPENDÊNCIA SEQUENCIAL
-# =========================================================================
 
 all: directories
 	$(MAKE) randomx
@@ -62,7 +56,6 @@ directories:
 	@mkdir -p $(BIN_DIR)
 	@mkdir -p $(RANDOMX_BUILD)
 
-# Garante que o CMake do RandomX compile em modo genérico e portátil para browsers
 randomx:
 	@echo "Building RandomX library for WebAssembly..."
 	@if [ -f "$(RANDOMX_CACHE)" ]; then \
@@ -104,5 +97,7 @@ rebuild: distclean all
 info:
 	@echo "Compiler: $(CXX)"
 	@echo "Output Target: $(TARGET)"
+	@echo "Pthreads: enabled"
+	@echo "Pthread pool: $(shell echo 4)"
 
 .PHONY: all directories randomx clean distclean rebuild info
