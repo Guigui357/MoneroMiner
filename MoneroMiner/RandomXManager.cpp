@@ -308,10 +308,6 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
         true
     );
 
-    // --------------------------------------------------
-    // Guardar seed atual
-    // --------------------------------------------------
-
     currentSeedHash = seedHash;
 
     return true;
