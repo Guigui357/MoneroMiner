@@ -11,11 +11,12 @@ CFLAGS = -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 EMSCRIPTEN_FLAGS = \
     -s WASM=1 \
     -s ALLOW_MEMORY_GROWTH=1 \
-    -s INITIAL_MEMORY=536870912 \
+    -s INITIAL_MEMORY=1073741824 \
+    -s MAXIMUM_MEMORY=2147483648
     -s ENVIRONMENT="web,worker" \
     -s EXPORTED_FUNCTIONS="['_startMining','_stopMining','_main']" \
     -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','wasmMemory']" \
-    -lwebsocket.js\
+    -lwebsocket.js \
     -s SINGLE_FILE=1
 
 LDFLAGS = $(EMSCRIPTEN_FLAGS)
