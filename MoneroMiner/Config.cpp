@@ -1,6 +1,6 @@
 #include "Config.h"
 #include "Globals.h"
-#include "Platform.h"  // Replace windows.h with Platform.h
+#include "Platform.h"
 #include <iostream>
 #include <string>
 #include <thread>
@@ -13,29 +13,36 @@ Config::Config() {
 }
 
 void Config::setDefaults() {
-    // Current pool (high difficulty):
     poolAddress = "xmr-us-east1.nanopool.org";
     poolPort = 10300;
-    walletAddress = "8C6hFb4Buo6dYwJiZEaFhyYhZTJaR4NyXSBzKMF1BnNKMGD92yeaY3a9PxuWp9bhTAh6dAXwqyyLfFxaPRct7j81L8t4iK2"; // Default test wallet
+    walletAddress = "8C6hFb4Buo6dYwJiZEaFhyYhZTJaR4NyXSBzKMF1BnNKMGD92yeaY3a9PxuWp9bhTAh6dAXwqyyLfFxaPRct7j81L8t4i4K2";
     workerName = "worker1";
-    password = "x";  // Some pools require non-empty password
+    password = "x";
     userAgent = "MoneroMiner/1.0.0";
+
+#ifdef __EMSCRIPTEN__
+    // Browser WASM: std::thread::hardware_concurrency() is frequently
+    // reported as 1 or otherwise conservatively by the browser runtime.
+    // Use the Emscripten pthread pool instead of under-utilizing it.
+    numThreads = 4;
+#else
     numThreads = 1;
-    debugMode = false;  // This should be overridden by --debug flag
+#endif
+
+    debugMode = false;
     useLogFile = false;
     logFileName = "monerominer.log";
-    headlessMode = false; // Initialize headless mode flag
+    headlessMode = false;
 }
 
 bool Config::parseCommandLine(int argc, char* argv[]) {
-    bool threadCountSpecified = false; // Track if user specified threads
+    bool threadCountSpecified = false;
 
-    // Parse all arguments first
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
             printUsage();
-            return false;  // Let the main program handle help
+            return false;
         }
         else if (arg == "--debug") {
             debugMode = true;
@@ -45,7 +52,7 @@ bool Config::parseCommandLine(int argc, char* argv[]) {
         }
         else if (arg == "--threads" && i + 1 < argc) {
             numThreads = std::stoi(argv[++i]);
-            threadCountSpecified = true; // Track if user specified threads
+            threadCountSpecified = true;
         }
         else if (arg == "--pool" && i + 1 < argc) {
             std::string poolStr = argv[++i];
@@ -68,35 +75,33 @@ bool Config::parseCommandLine(int argc, char* argv[]) {
         }
         else if (arg == "--headless") {
             headlessMode = true;
-            useLogFile = true; // Force log file in headless mode
+            useLogFile = true;
         }
     }
-    
-    // ONLY auto-detect if user did NOT specify --threads
+
+#ifndef __EMSCRIPTEN__
     if (!threadCountSpecified && numThreads <= 1) {
         unsigned int logicalProcessors = Platform::getLogicalProcessors();
-
-        // Use the majority of logical processors but leave one core for the system.
-        // This yields: 3 threads on 4-core, 7 on 8-core, 15 on 16-core, 23 on 24-core, etc.
         unsigned int recommended = (logicalProcessors > 1) ? (logicalProcessors - 1) : 1;
         numThreads = static_cast<int>(recommended);
         std::cout << "Auto-detected " << logicalProcessors
                   << " logical processors, using " << numThreads
                   << " mining threads (leaving 1 thread for system)" << std::endl;
     }
-    
-    // Set default worker name based on machine name if not specified
+#else
+    if (!threadCountSpecified && numThreads < 1)
+        numThreads = 1;
+#endif
+
     if (workerName.empty() || workerName == "worker1") {
         std::string computerName = Platform::getComputerName();
         workerName = computerName;
-        
-        // Sanitize: lowercase and remove invalid chars
         for (char& c : workerName) {
-            if (!std::isalnum(c)) c = '_';
-            else c = std::tolower(c);
+            if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
+            else c = std::tolower(static_cast<unsigned char>(c));
         }
     }
-    
+
     return true;
 }
 
@@ -105,17 +110,14 @@ bool validateConfig(const Config& config) {
         std::cerr << "Error: Wallet address is required" << std::endl;
         return false;
     }
-
     if (config.numThreads <= 0) {
         std::cerr << "Error: Invalid thread count" << std::endl;
         return false;
     }
-
     if (config.poolPort <= 0) {
         std::cerr << "Error: Invalid pool port" << std::endl;
         return false;
     }
-
     return true;
 }
 
