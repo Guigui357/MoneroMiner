@@ -1,5 +1,6 @@
 #include "MiningThreadData.h"
 #include "RandomXManager.h"
+#include "PoolClient.h"
 #include "Utils.h"
 #include "Config.h"
 #include "Globals.h"
@@ -17,14 +18,39 @@ MiningThreadData::~MiningThreadData() {
 }
 
 bool MiningThreadData::initializeVM() {
-    // RandomXManager is the single owner of all VMs.
+    // The pool job supplies the RandomX seed.  VM creation must never happen
+    // before the manager has initialized the cache with that seed.
     if (!RandomXManager::isInitialized()) {
+        std::string seedHash;
+
+        {
+            std::lock_guard<std::mutex> lock(PoolClient::jobMutex);
+            seedHash = PoolClient::currentSeedHash;
+        }
+
+        if (seedHash.empty()) {
+            Utils::threadSafePrint(
+                "[RandomX] Thread " + std::to_string(threadId) +
+                ": manager not initialized and pool seed is empty",
+                true
+            );
+            return false;
+        }
+
         Utils::threadSafePrint(
             "[RandomX] Thread " + std::to_string(threadId) +
-            ": manager not initialized",
+            ": initializing manager with seed " + seedHash,
             true
         );
-        return false;
+
+        if (!RandomXManager::initialize(seedHash)) {
+            Utils::threadSafePrint(
+                "[RandomX] Thread " + std::to_string(threadId) +
+                ": RandomXManager::initialize() failed",
+                true
+            );
+            return false;
+        }
     }
 
     if (!RandomXManager::initializeVM(threadId)) {
