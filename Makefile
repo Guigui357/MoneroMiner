@@ -4,15 +4,15 @@
 CXX = em++
 CC = emcc
 
-# WebAssembly pthreads are required because the miner creates std::thread workers.
-# SIMD is kept enabled; RandomX is built as generic for browser portability.
-CXXFLAGS = -std=c++17 -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
-CFLAGS = -O3 -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
+# Optimize both the miner and RandomX. LTO lets LLVM optimize across the
+# MoneroMiner/RandomX boundary; SIMD is required by the browser build.
+CXXFLAGS = -std=c++17 -O3 -flto -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
+CFLAGS = -O3 -flto -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 
 EMSCRIPTEN_FLAGS = \
     -s WASM=1 \
     -s USE_PTHREADS=1 \
-    -s PTHREAD_POOL_SIZE=4 \
+    -s PTHREAD_POOL_SIZE=6 \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s INITIAL_MEMORY=1073741824 \
     -s MAXIMUM_MEMORY=2147483648 \
@@ -22,7 +22,7 @@ EMSCRIPTEN_FLAGS = \
     -lwebsocket.js \
     -s SINGLE_FILE=1
 
-LDFLAGS = $(EMSCRIPTEN_FLAGS)
+LDFLAGS = $(EMSCRIPTEN_FLAGS) -flto -O3
 
 SRC_DIR = MoneroMiner
 BUILD_DIR = build
@@ -57,7 +57,7 @@ directories:
 	@mkdir -p $(RANDOMX_BUILD)
 
 randomx:
-	@echo "Building RandomX library for WebAssembly..."
+	@echo "Building optimized RandomX library for WebAssembly..."
 	@if [ -f "$(RANDOMX_CACHE)" ]; then \
 		old_src=$$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$(RANDOMX_CACHE)" | tr -d '\r'); \
 		if [ -n "$$old_src" ] && [ "$$old_src" != "$(RANDOMX_SRC_ABS)" ]; then \
@@ -68,16 +68,20 @@ randomx:
 	@cd "$(RANDOMX_DIR)" && mkdir -p build && cd build && \
 	emcmake cmake -DCMAKE_BUILD_TYPE=Release \
 	        -DBUILD_SHARED_LIBS=OFF \
+	        -DCMAKE_C_FLAGS_RELEASE="-O3 -flto -msimd128" \
+	        -DCMAKE_CXX_FLAGS_RELEASE="-O3 -flto -msimd128" \
+	        -DCMAKE_EXE_LINKER_FLAGS="-flto" \
+	        -DCMAKE_SHARED_LINKER_FLAGS="-flto" \
 	        -DARCH=generic \
 	        .. && \
 	$(MAKE) randomx -j$(shell nproc 2>/dev/null || echo 4)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
-	@echo "Compiling WebAssembly Object $<..."
+	@echo "Compiling optimized WebAssembly Object $<..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 $(TARGET): $(OBJECTS)
-	@echo "Linking WebAssembly Target $(TARGET)..."
+	@echo "Linking optimized WebAssembly Target $(TARGET)..."
 	$(CXX) $(OBJECTS) $(RANDOMX_LIB) -o $(TARGET) $(LDFLAGS)
 	@echo "Build complete! Output generated successfully in: $(BIN_DIR)/"
 
@@ -98,6 +102,8 @@ info:
 	@echo "Compiler: $(CXX)"
 	@echo "Output Target: $(TARGET)"
 	@echo "Pthreads: enabled"
-	@echo "Pthread pool: $(shell echo 4)"
+	@echo "Pthread pool: 6"
+	@echo "LTO: enabled"
+	@echo "WASM SIMD: enabled"
 
 .PHONY: all directories randomx clean distclean rebuild info
