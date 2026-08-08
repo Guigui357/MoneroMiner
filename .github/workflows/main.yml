@@ -28,7 +28,7 @@ jobs:
       uses: mymindstorm/setup-emsdk@v14
       with:
         version: '3.1.50'
-        cache-key: 'actions-v3-key'
+        cache-key: 'dirijdix'
 
     # 4. Executa a checagem das versões para garantir que o emcc está ativo
     - name: Verify Emscripten Installation
