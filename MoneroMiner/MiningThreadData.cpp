@@ -13,32 +13,47 @@ MiningThreadData::MiningThreadData(int id) : threadId(id) {
 
 MiningThreadData::~MiningThreadData() {
     RandomXManager::cleanupVM(threadId);
+    vm = nullptr;
 }
 
 bool MiningThreadData::initializeVM() {
-    if (vm != nullptr) {
-        return true; // Already initialized
+    // RandomXManager is the single owner of all VMs.
+    if (!RandomXManager::isInitialized()) {
+        Utils::threadSafePrint(
+            "[RandomX] Thread " + std::to_string(threadId) +
+            ": manager not initialized",
+            true
+        );
+        return false;
     }
 
-    // Get the global dataset/cache from RandomXManager
-    randomx_dataset* dataset = RandomXManager::getDataset();
-    randomx_cache* cache = RandomXManager::getCache();
-    
-    if (!dataset && !cache) {
-        return false; // Neither dataset nor cache available
+    if (!RandomXManager::initializeVM(threadId)) {
+        Utils::threadSafePrint(
+            "[RandomX] Thread " + std::to_string(threadId) +
+            ": initializeVM() failed",
+            true
+        );
+        return false;
     }
 
-    // Get flags from RandomXManager
-    randomx_flags flags = RandomXManager::getVMFlags();
-    
-    // Create VM with dataset (preferred) or cache
-    if (dataset) {
-        vm = randomx_create_vm(flags, cache, dataset);
-    } else {
-        vm = randomx_create_vm(flags, cache, nullptr);
+    vm = RandomXManager::getVM(threadId);
+
+    if (!vm) {
+        Utils::threadSafePrint(
+            "[RandomX] Thread " + std::to_string(threadId) +
+            ": VM missing after initialization",
+            true
+        );
+        return false;
     }
-    
-    return vm != nullptr;
+
+    Utils::threadSafePrint(
+        "[RandomX] Thread " + std::to_string(threadId) +
+        ": VM ready",
+        true
+    );
+
+    return true;
 }
 
 bool MiningThreadData::calculateHash(const std::vector<uint8_t>& input, uint64_t nonce) {
@@ -52,40 +67,44 @@ bool MiningThreadData::calculateHashAndCheckTarget(
     const std::vector<uint8_t>& targetBytes,
     std::vector<uint8_t>& hashOut)
 {
-    if (!vm || blob.empty()) {
+    // Keep this legacy API backed by the manager-owned VM.
+    if (blob.empty() || hashOut.size() < RANDOMX_HASH_SIZE) {
+        return false;
+    }
+
+    if (!vm) {
+        vm = RandomXManager::getVM(threadId);
+    }
+
+    if (!vm) {
         return false;
     }
 
     try {
-        // Calculate RandomX hash
         randomx_calculate_hash(vm, blob.data(), blob.size(), hashOut.data());
-        
+
         totalHashes++;
-        
-        // Convert hash and target to uint256_t using the constructor
+
         uint256_t hashValue(hashOut.data());
         uint256_t targetValue(targetBytes.data());
-        
-        // Use the built-in comparison operator
+
         bool isValid = hashValue < targetValue;
-        
-        // Debug output - ONLY show every 10k hashes OR when valid share found
+
         if (config.debugMode && (isValid || (totalHashes % 10000 == 0))) {
             std::stringstream ss;
             ss << "[T" << threadId << " PoW @ " << totalHashes << " hashes]\n";
             ss << "  Hash:   " << hashValue.toHex() << "\n";
             ss << "  Target: " << targetValue.toHex() << "\n";
             ss << "  Result: " << (isValid ? "VALID SHARE FOUND!" : "does not meet target");
-            
+
             if (isValid) {
                 ss << "\n  >>> SUBMITTING SHARE <<<";
             }
-            
+
             Utils::threadSafePrint(ss.str(), true);
         }
-        
+
         return isValid;
-        
     }
     catch (...) {
         return false;
