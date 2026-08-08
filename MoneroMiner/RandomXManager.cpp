@@ -493,68 +493,91 @@ bool RandomXManager::initialize(
 {
     std::lock_guard<std::mutex> lock(initMutex);
 
-    if (
-        seedHash == currentSeedHash &&
-        cache != nullptr &&
-        initialized
-    )
-    {
-        if (
-            useLightMode ||
-            dataset != nullptr
-        )
-        {
-            Utils::threadSafePrint(
-                "RandomX already initialized for seed hash",
-                true
-            );
-
-            return true;
-        }
-    }
-
     Utils::threadSafePrint(
-        "=== INITIALIZING RANDOMX ===",
+        "[WASM-DEBUG] >>> RandomXManager::initialize() ENTROU",
         true
     );
 
     Utils::threadSafePrint(
-        "Seed hash: " + seedHash,
+        "[WASM-DEBUG] seedHash = " + seedHash,
         true
     );
 
-    if (!initializeCache(seedHash))
+    if (seedHash.empty())
     {
         Utils::threadSafePrint(
-            "Failed to initialize RandomX cache",
+            "[WASM-DEBUG] ERRO: seedHash vazio",
             true
         );
 
         return false;
     }
 
+    if (seedHash.size() != 64)
+    {
+        Utils::threadSafePrint(
+            "[WASM-DEBUG] ERRO: seedHash possui tamanho " +
+            std::to_string(seedHash.size()) +
+            ", esperado 64",
+            true
+        );
+
+        return false;
+    }
+
+    // Se já está inicializado para a mesma seed,
+    // não recria o cache.
+    if (
+        seedHash == currentSeedHash &&
+        cache != nullptr &&
+        initialized
+    )
+    {
+        Utils::threadSafePrint(
+            "[WASM-DEBUG] RandomX já inicializado para esta seed",
+            true
+        );
+
+        return true;
+    }
+
+    Utils::threadSafePrint(
+        "[WASM-DEBUG] Chamando initializeCache()...",
+        true
+    );
+
+    if (!initializeCache(seedHash))
+    {
+        Utils::threadSafePrint(
+            "[WASM-DEBUG] ERRO: initializeCache() falhou",
+            true
+        );
+
+        initialized = false;
+        return false;
+    }
+
+    Utils::threadSafePrint(
+        "[WASM-DEBUG] initializeCache() OK",
+        true
+    );
+
 #ifdef __EMSCRIPTEN__
 
-    // ========================================================
-    // WASM:
-    // NÃO criar dataset.
-    // ========================================================
-
     useLightMode = true;
-
     flags = RANDOMX_FLAG_DEFAULT;
 
     Utils::threadSafePrint(
-        "[WASM] RandomX inicializado em LIGHT MODE",
+        "[WASM] RandomX LIGHT MODE",
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] Dataset não será criado",
         true
     );
 
 #else
-
-    // ========================================================
-    // DESKTOP:
-    // Dataset normal.
-    // ========================================================
 
     if (!useLightMode)
     {
@@ -565,20 +588,16 @@ bool RandomXManager::initialize(
 
         bool loadedDataset = false;
 
-        if (std::filesystem::exists(
-                datasetFileName))
+        if (std::filesystem::exists(datasetFileName))
         {
             size_t fileSize =
-                std::filesystem::file_size(
-                    datasetFileName
-                );
+                std::filesystem::file_size(datasetFileName);
 
             unsigned long itemCount =
                 randomx_dataset_item_count();
 
             size_t expectedMinSize =
-                static_cast<size_t>(itemCount)
-                *
+                static_cast<size_t>(itemCount) *
                 RANDOMX_DATASET_ITEM_SIZE;
 
             if (fileSize >= expectedMinSize)
@@ -588,17 +607,12 @@ bool RandomXManager::initialize(
                     true
                 );
 
-                if (loadDataset(
-                        datasetFileName))
-                {
-                    loadedDataset = true;
-                }
+                loadedDataset =
+                    loadDataset(datasetFileName);
             }
             else
             {
-                std::filesystem::remove(
-                    datasetFileName
-                );
+                std::filesystem::remove(datasetFileName);
             }
         }
 
@@ -611,6 +625,11 @@ bool RandomXManager::initialize(
 
             if (!createDataset())
             {
+                Utils::threadSafePrint(
+                    "Dataset creation failed; switching to LIGHT MODE",
+                    true
+                );
+
                 useLightMode = true;
                 flags = cacheAllocFlags;
             }
@@ -624,104 +643,29 @@ bool RandomXManager::initialize(
 #endif
 
     currentSeedHash = seedHash;
-
     initialized = true;
 
-    // ========================================================
-    // Summary
-    // ========================================================
-
-    std::stringstream summary;
-
-    summary << "RandomX: allocated ";
-
-#ifdef __EMSCRIPTEN__
-
-    int cacheSize = 256;
-    int datasetSize = 0;
-
-#else
-
-    int cacheSize = 256;
-    int datasetSize =
-        useLightMode
-        ?
-        0
-        :
-        2080;
-
-#endif
-
-    int totalSize =
-        cacheSize +
-        datasetSize;
-
-    summary
-        << totalSize
-        << " MB ("
-        << datasetSize
-        << "+"
-        << cacheSize
-        << ")";
-
-    if (
-        flags &
-        RANDOMX_FLAG_LARGE_PAGES
-    )
-    {
-        summary << " huge pages 100%";
-    }
-    else
-    {
-        summary << " huge pages 0%";
-    }
-
-    if (
-        flags &
-        RANDOMX_FLAG_JIT
-    )
-    {
-        summary << " +JIT";
-    }
-
-    if (
-        flags &
-        RANDOMX_FLAG_HARD_AES
-    )
-    {
-        summary << " +AES";
-    }
-
-    if (
-        flags &
-        RANDOMX_FLAG_FULL_MEM
-    )
-    {
-        summary << " +FULL";
-    }
-
     Utils::threadSafePrint(
-        summary.str(),
+        "[WASM-DEBUG] initialized = true",
         true
     );
 
-    if (config.debugMode)
-    {
-        Utils::threadSafePrint(
-            "=== RANDOMX READY ===",
-            true
-        );
+    Utils::threadSafePrint(
+        "[WASM-DEBUG] cache = " +
+        std::string(cache ? "VALID" : "NULL"),
+        true
+    );
 
-        Utils::threadSafePrint(
-            "Flags: 0x"
-            +
-            Utils::formatHex(
-                static_cast<uint64_t>(flags),
-                8
-            ),
-            true
-        );
-    }
+    Utils::threadSafePrint(
+        "[WASM-DEBUG] currentSeedHash = " +
+        currentSeedHash,
+        true
+    );
+
+    Utils::threadSafePrint(
+        "=== RANDOMX READY ===",
+        true
+    );
 
     return true;
 }
@@ -909,10 +853,59 @@ bool RandomXManager::createVM(int threadId)
 
 bool RandomXManager::initializeVM(int threadId)
 {
-    if (!initialized)
-        return false;
+    Utils::threadSafePrint(
+        "[WASM-DEBUG] >>> initializeVM(" +
+        std::to_string(threadId) +
+        ") ENTROU",
+        true
+    );
 
-    return createVM(threadId);
+    Utils::threadSafePrint(
+        "[WASM-DEBUG] initialized = " +
+        std::string(initialized ? "true" : "false"),
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM-DEBUG] cache = " +
+        std::string(cache ? "VALID" : "NULL"),
+        true
+    );
+
+    if (!initialized)
+    {
+        Utils::threadSafePrint(
+            "[WASM-DEBUG] ERRO: initialize() ainda não foi concluído",
+            true
+        );
+
+        return false;
+    }
+
+    if (cache == nullptr)
+    {
+        Utils::threadSafePrint(
+            "[WASM-DEBUG] ERRO: cache == nullptr",
+            true
+        );
+
+        return false;
+    }
+
+    Utils::threadSafePrint(
+        "[WASM-DEBUG] Chamando createVM()...",
+        true
+    );
+
+    bool result = createVM(threadId);
+
+    Utils::threadSafePrint(
+        "[WASM-DEBUG] createVM() retornou " +
+        std::string(result ? "TRUE" : "FALSE"),
+        true
+    );
+
+    return result;
 }
 
 
