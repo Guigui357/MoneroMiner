@@ -966,54 +966,6 @@ void webStatsMonitorLoop() {
     statsThreadRunning = false;
 }
 
-extern "C" {
-
-bool startMining(
-    const char* customWallet,
-    const char* customWorker
-) {
-    if (customWallet != nullptr &&
-        std::strlen(customWallet) > 0)
-    {
-        config.walletAddress = customWallet;
-    }
-
-    if (customWorker != nullptr &&
-        std::strlen(customWorker) > 0)
-    {
-        config.workerName = customWorker;
-    }
-
-    Utils::threadSafePrint(
-        "[WASM] startMining() iniciado",
-        true
-    );
-
-    if (!PoolClient::initialize())
-    {
-        Utils::threadSafePrint(
-            "[WASM] Falha ao inicializar PoolClient",
-            true
-        );
-
-        return false;
-    }
-
-    if (!PoolClient::connect())
-    {
-        Utils::threadSafePrint(
-            "[WASM] Falha ao criar WebSocket",
-            true
-        );
-
-        return false;
-    }
-
-    Utils::threadSafePrint(
-        "[WASM] WebSocket iniciado. Aguardando eventos...",
-        true
-    );
-
 #include <emscripten.h> // <--- OBRIGATÓRIO: Fornece os ganchos e macros do Emscripten para o JS
 
 extern "C" {
