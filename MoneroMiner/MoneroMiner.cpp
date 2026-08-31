@@ -1014,11 +1014,38 @@ bool startMining(
         true
     );
 
-    // NÃO esperar Job aqui.
-    // O WebSocket é assíncrono.
+#include <emscripten.h> // <--- OBRIGATÓRIO: Fornece os ganchos e macros do Emscripten para o JS
 
-    return true;
-}
+extern "C" {
+
+    // EMSCRIPTEN_KEEPALIVE força o compilador a exportar e nunca apagar a função durante a otimização -O3
+    EMSCRIPTEN_KEEPALIVE
+    bool startMining(const char* customWallet, const char* customWorker) {
+        if (customWallet != nullptr && std::strlen(customWallet) > 0) {
+            config.walletAddress = customWallet;
+        }
+
+        if (customWorker != nullptr && std::strlen(customWorker) > 0) {
+            config.workerName = customWorker;
+        }
+
+        Utils::threadSafePrint("[WASM] startMining() iniciado", true);
+
+        if (!PoolClient::initialize()) {
+            Utils::threadSafePrint("[WASM] Falha ao inicializar PoolClient", true);
+            return false;
+        }
+
+        if (!PoolClient::connect()) {
+            Utils::threadSafePrint("[WASM] Falha ao criar WebSocket", true);
+            return false;
+        }
+
+        Utils::threadSafePrint("[WASM] WebSocket iniciado. Aguardando eventos...", true);
+        return true;
+    }
+
+    EMSCRIPTEN_KEEPALIVE
     bool stopMining() {
         Utils::threadSafePrint("[WASM] Finalizando o motor de mineração a pedido da interface...", true);
         
@@ -1046,6 +1073,7 @@ bool startMining(
         return true;
     }
 
+    EMSCRIPTEN_KEEPALIVE
     int main(int argc, char* argv[]) {
         (void)argc; (void)argv;
         Utils::threadSafePrint("[WASM] Subsistema de Threads do Emscripten pronto para comandos.", true);
@@ -1053,6 +1081,7 @@ bool startMining(
     }
 
 } // Fim do bloco extern "C"
+
 
 /*
 int main(int argc, char* argv[]) {
