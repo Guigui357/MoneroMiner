@@ -14,11 +14,11 @@ EMSCRIPTEN_FLAGS = \
     -s USE_PTHREADS=1 \
     -s PTHREAD_POOL_SIZE=6 \
     -s ALLOW_MEMORY_GROWTH=1 \
-    -s INITIAL_MEMORY=1073741824 \
+    -s INITIAL_MEMORY=268435456 \
     -s MAXIMUM_MEMORY=2147483648 \
     -s ENVIRONMENT="web,worker" \
     -s EXPORTED_FUNCTIONS="['_startMining','_stopMining','_main']" \
-    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','wasmMemory']" \
+    -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','allocateUTF8']" \
     -lwebsocket.js \
     -s SINGLE_FILE=1
 
