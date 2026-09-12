@@ -14,15 +14,12 @@ public:
     bool initializeVM();
     bool calculateHash(const std::vector<uint8_t>& input, uint64_t nonce);
 
-    // Hot-path API: target is passed as the Job's existing four 64-bit words,
-    // avoiding a 32-byte vector allocation for every nonce.
     bool calculateHashAndCheckTarget(
         const std::vector<uint8_t>& blob,
         const std::array<uint64_t, 4>& targetWords,
         std::vector<uint8_t>& hashOut
     );
 
-    // Compatibility overload for callers that still have a serialized target.
     bool calculateHashAndCheckTarget(
         const std::vector<uint8_t>& blob,
         const std::vector<uint8_t>& target,
