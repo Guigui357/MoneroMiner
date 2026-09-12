@@ -138,8 +138,11 @@ bool MiningThreadData::calculateHashAndCheckTarget(
     }
 
     if (config.debugMode && (isValid || (totalHashes % 10000 == 0))) {
-        uint256_t hashValue(hashOut.data());
-        uint256_t targetValue(targetWords.data());
+        uint256_t hashValue;
+        hashValue.data = hashWords;
+        uint256_t targetValue;
+        targetValue.data = targetWords;
+
         std::stringstream ss;
         ss << "[T" << threadId << " PoW @ " << totalHashes << " hashes]\n";
         ss << "  Hash:   " << hashValue.toHex() << "\n";
