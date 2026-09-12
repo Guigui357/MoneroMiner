@@ -10,7 +10,7 @@
 extern Config config;
 
 // Default constructor
-Job::Job() : jobId(""), height(0), seedHash(""), difficulty(0), nonceOffset(39), blob(), targetBytes{} {
+Job::Job() : jobId(""), height(0), seedHash(""), difficulty(0), nonceOffset(39), targetHash{}, targetBytes{}, blob() {
     targetHash = {0, 0, 0, 0};
 }
 
