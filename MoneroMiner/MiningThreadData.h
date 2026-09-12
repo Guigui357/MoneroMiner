@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <vector>
@@ -14,9 +15,9 @@ public:
     bool calculateHash(const std::vector<uint8_t>& input, uint64_t nonce);
 
     bool calculateHashAndCheckTarget(
-        const std::vector<uint8_t>& blob,
-        const std::vector<uint8_t>& target,
-        std::vector<uint8_t>& hashOut
+        const std::vector<uint8_t>& input,
+        const std::array<uint8_t, 32>& target,
+        std::array<uint8_t, 32>& hashOut
     );
 
     int getThreadId() const { return threadId; }

@@ -88,8 +88,8 @@ bool MiningThreadData::calculateHash(const std::vector<uint8_t>& input, uint64_t
 
 bool MiningThreadData::calculateHashAndCheckTarget(
     const std::vector<uint8_t>& blob,
-    const std::vector<uint8_t>& targetBytes,
-    std::vector<uint8_t>& hashOut)
+    const std::array<uint8_t, 32>& target,
+    std::array<uint8_t, 32>& hashOut)
 {
     if (!vm) {
         Utils::threadSafePrint(
@@ -105,32 +105,34 @@ bool MiningThreadData::calculateHashAndCheckTarget(
         return false;
     }
 
-    if (targetBytes.size() != 32) {
-        Utils::threadSafePrint(
-            "[RandomX] T" + std::to_string(threadId) +
-            ": invalid target size " + std::to_string(targetBytes.size()), true);
-        return false;
-    }
-
-    if (hashOut.size() < RANDOMX_HASH_SIZE)
-        hashOut.resize(RANDOMX_HASH_SIZE);
-
     randomx_calculate_hash(vm, blob.data(), blob.size(), hashOut.data());
 
-    totalHashes++;
+    bool isValid = false;
+    for (size_t i = RANDOMX_HASH_SIZE - 1;; --i) {
+        if (hashOut[i] < target[i]) {
+            isValid = true;
+            break;
+        }
+        if (hashOut[i] > target[i]) {
+            break;
+        }
+        if (i == 0) {
+            break;
+        }
+    }
 
-    uint256_t hashValue(hashOut.data());
-    uint256_t targetValue(targetBytes.data());
-    bool isValid = hashValue < targetValue;
-
-    if (config.debugMode && (isValid || (totalHashes % 10000 == 0))) {
+    if (config.debugMode && isValid) {
         std::stringstream ss;
-        ss << "[T" << threadId << " PoW @ " << totalHashes << " hashes]\n";
-        ss << "  Hash:   " << hashValue.toHex() << "\n";
-        ss << "  Target: " << targetValue.toHex() << "\n";
-        ss << "  Result: " << (isValid ? "VALID SHARE FOUND!" : "does not meet target");
-        if (isValid)
-            ss << "\n  >>> SUBMITTING SHARE <<<";
+        ss << "[T" << threadId << "] Valid share candidate\n  Hash:   ";
+        for (uint8_t byte : hashOut) {
+            ss << std::hex << std::setw(2) << std::setfill('0')
+               << static_cast<int>(byte);
+        }
+        ss << "\n  Target: ";
+        for (uint8_t byte : target) {
+            ss << std::hex << std::setw(2) << std::setfill('0')
+               << static_cast<int>(byte);
+        }
         Utils::threadSafePrint(ss.str(), true);
     }
 

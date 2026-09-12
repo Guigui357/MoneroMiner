@@ -38,6 +38,7 @@ public:
     
     // 256-bit target stored as 4x uint64_t (little-endian)
     std::array<uint64_t, 4> targetHash;
+    std::array<uint8_t, 32> targetBytes;
 
     // Default constructor (implemented in .cpp)
     Job();
@@ -54,7 +55,8 @@ public:
 
     // Other methods
     size_t findNonceOffset() const;
-    std::vector<uint8_t> getBlobBytes() const;
+    const std::vector<uint8_t>& getBlobBytes() const;
+    const std::array<uint8_t, 32>& getTargetBytes() const;
     std::string getJobId() const;
     std::string getTarget() const;
     

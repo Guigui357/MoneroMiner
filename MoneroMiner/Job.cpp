@@ -10,7 +10,7 @@
 extern Config config;
 
 // Default constructor
-Job::Job() : jobId(""), height(0), seedHash(""), difficulty(0), nonceOffset(39), blob() {
+Job::Job() : jobId(""), height(0), seedHash(""), difficulty(0), nonceOffset(39), blob(), targetBytes{} {
     targetHash = {0, 0, 0, 0};
 }
 
@@ -21,6 +21,7 @@ Job::Job(const Job& other)
     , difficulty(other.difficulty)
     , nonceOffset(other.nonceOffset)
     , targetHash(other.targetHash)
+    , targetBytes(other.targetBytes)
     , blob(other.blob)
 {
 }
@@ -43,7 +44,7 @@ Job& Job::operator=(const Job& other) {
 
 Job::Job(const std::string& blobHex, const std::string& id, const std::string& targetHex,
          uint64_t h, const std::string& seed)
-    : jobId(id), height(h), seedHash(seed), difficulty(0), nonceOffset(0)
+    : jobId(id), height(h), seedHash(seed), difficulty(0), nonceOffset(0), targetHash{}, targetBytes{}
 {
     blob = Utils::hexToBytes(blobHex);
     nonceOffset = findNonceOffset();
@@ -71,6 +72,11 @@ Job::Job(const std::string& blobHex, const std::string& id, const std::string& t
         targetHash[1] = target256.data[1];
         targetHash[2] = target256.data[2];
         targetHash[3] = target256.data[3];
+        for (size_t i = 0; i < 4; ++i) {
+            for (size_t j = 0; j < 8; ++j) {
+                targetBytes[i * 8 + j] = static_cast<uint8_t>((targetHash[i] >> (j * 8)) & 0xFF);
+            }
+        }
         
         if (config.debugMode) {
             std::stringstream ss;
@@ -84,17 +90,24 @@ Job::Job(const std::string& blobHex, const std::string& id, const std::string& t
     } else if (targetData.size() == 32) {
         // Pool sent full 256-bit target (rare, but handle it)
         // Parse as little-endian 256-bit value
-        for (int i = 0; i < 4; i++) {
-            uint64_t word = 0;
-            for (int j = 0; j < 8; j++) {
-                word |= static_cast<uint64_t>(targetData[i * 8 + j]) << (j * 8);
+        for (size_t i = 0; i < 4; ++i) {
+            for (size_t j = 0; j < 8; ++j) {
+                targetHash[i] |= static_cast<uint64_t>(targetData[i * 8 + j]) << (j * 8);
             }
-            targetHash[i] = word;
+        }
+        for (size_t i = 0; i < 4; ++i) {
+            for (size_t j = 0; j < 8; ++j) {
+                targetBytes[i * 8 + j] = static_cast<uint8_t>((targetHash[i] >> (j * 8)) & 0xFF);
+            }
         }
         
         // Calculate difficulty from target
-        if (targetHash[0] > 0) {
-            difficulty = 0xFFFFFFFFFFFFFFFFULL / targetHash[0];
+        uint256_t targetValue(targetData.data());
+        if (targetValue > uint256_t()) {
+            difficulty = static_cast<uint64_t>((uint256_t::maximum() / targetValue).data[0]);
+            if (difficulty == 0) {
+                difficulty = 1;
+            }
         } else {
             difficulty = 1;
         }
@@ -103,6 +116,8 @@ Job::Job(const std::string& blobHex, const std::string& id, const std::string& t
         // Invalid target size - set to maximum difficulty (hardest target)
         difficulty = 1;
         targetHash = {0xFFFFFFFFFFFFFFFFULL, 0, 0, 0};
+        targetBytes.fill(0);
+        targetBytes[31] = 0xFF;
     }
 }
 
@@ -176,8 +191,12 @@ size_t Job::findNonceOffset() const {
     return 39;
 }
 
-std::vector<uint8_t> Job::getBlobBytes() const {
+const std::vector<uint8_t>& Job::getBlobBytes() const {
     return blob;
+}
+
+const std::array<uint8_t, 32>& Job::getTargetBytes() const {
+    return targetBytes;
 }
 
 std::string Job::getJobId() const {
