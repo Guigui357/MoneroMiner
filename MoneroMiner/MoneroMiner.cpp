@@ -327,7 +327,7 @@ void miningThread(MiningThreadData* data) {
         uint64_t hashesTotal = 0;
         std::vector<uint8_t> workingBlob;
         workingBlob.reserve(128);
-        std::vector<uint8_t> hashResult(32);
+        std::array<uint8_t, 32> hashResult{};
         uint64_t debugHashCounter = 0;
 
         if (config.debugMode) {
@@ -438,16 +438,10 @@ void miningThread(MiningThreadData* data) {
                     // Defensive: zero hashResult before calculation
                     std::fill(hashResult.begin(), hashResult.end(), 0);
                     
-                    // Convert targetHash (4x uint64_t) to bytes (32 bytes) for calculation
-                    std::vector<uint8_t> targetBytes(32, 0);
-                    for (int wordIdx = 0; wordIdx < 4; wordIdx++) {
-                        uint64_t word = jobCopy.targetHash[wordIdx];
-                        for (int byteIdx = 0; byteIdx < 8; byteIdx++) {
-                            targetBytes[wordIdx * 8 + byteIdx] = static_cast<uint8_t>((word >> (byteIdx * 8)) & 0xFF);
-                        }
-                    }
-                    
-                    hashOk = data->calculateHashAndCheckTarget(workingBlob, targetBytes, hashResult);
+                    hashOk = data->calculateHashAndCheckTarget(
+                        workingBlob,
+                        jobCopy.getTargetBytes(),
+                        hashResult);
                 }
 
                 debugHashCounter++;

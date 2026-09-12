@@ -113,6 +113,55 @@ struct uint256_t {
         return quotient;
     }
 
+    uint256_t operator/(const uint256_t& divisor) const {
+        if (divisor == uint256_t()) return uint256_t();
+
+        uint256_t quotient;
+        std::array<uint64_t, 5> remainder{};
+
+        for (int bit = 255; bit >= 0; --bit) {
+            uint64_t carry = 0;
+            for (size_t i = 0; i < remainder.size(); ++i) {
+                uint64_t nextCarry = remainder[i] >> 63;
+                remainder[i] = (remainder[i] << 1) | carry;
+                carry = nextCarry;
+            }
+
+            remainder[0] |= (data[static_cast<size_t>(bit) / 64] >> (bit % 64)) & 1ULL;
+
+            bool remainderIsLarger = remainder[4] != 0;
+            for (int i = 3; !remainderIsLarger && i >= 0; --i) {
+                if (remainder[i] > divisor.data[i]) {
+                    remainderIsLarger = true;
+                } else if (remainder[i] < divisor.data[i]) {
+                    break;
+                } else if (i == 0) {
+                    remainderIsLarger = true;
+                }
+            }
+
+            if (remainderIsLarger) {
+                uint64_t borrow = 0;
+                for (size_t i = 0; i < 4; ++i) {
+                    uint64_t word = remainder[i];
+                    uint64_t difference = word - divisor.data[i];
+                    uint64_t wordBorrow = word < divisor.data[i] ? 1ULL : 0ULL;
+                    uint64_t result = difference - borrow;
+                    uint64_t borrowBorrow = difference < borrow ? 1ULL : 0ULL;
+                    remainder[i] = result;
+                    borrow = wordBorrow | borrowBorrow;
+                }
+                if (borrow != 0) {
+                    --remainder[4];
+                }
+
+                quotient.data[static_cast<size_t>(bit) / 64] |= 1ULL << (bit % 64);
+            }
+        }
+
+        return quotient;
+    }
+
     // Create max value (2^256 - 1)
     static uint256_t maximum() {
         uint256_t result;
