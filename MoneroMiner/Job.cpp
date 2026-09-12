@@ -35,6 +35,7 @@ Job& Job::operator=(const Job& other) {
         difficulty = other.difficulty;
         nonceOffset = other.nonceOffset;
         targetHash = other.targetHash;
+        targetBytes = other.targetBytes;
         blob = other.blob;
         
         // Remove debug spam - assignment operator is called frequently
