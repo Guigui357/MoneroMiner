@@ -6,20 +6,25 @@
 #include <cstdint>
 #include <vector>
 
+#include "program.hpp"
+
 namespace randomx {
 
-// Stage 1 WASM JIT emitter.
-// This deliberately starts with the integer register subset. Floating-point,
-// scratchpad, CFROUND and superscalar handling remain in the interpreter until
-// their WASM semantics are added and validated against the RandomX vectors.
+// Stage 2 WASM JIT emitter.
+// Emits executable WASM for the integer RandomX instruction subset and the
+// scratchpad load/store forms. Floating point, high multiply, branches and
+// CFROUND remain interpreter-only until their semantics are validated.
 class WasmJit {
 public:
     WasmJit() = default;
 
-    // Emit a minimal standalone WASM module containing an exported function
-    // that executes the supplied integer micro-program. The function accepts
-    // a pointer to a 16-element uint64 register file and operates in-place.
-    bool compile(const uint8_t* program, std::size_t size);
+    // Builds a standalone module importing the host linear memory as
+    // env.memory and exporting:
+    //   rx_jit(i32 regs_ptr, i32 scratchpad_ptr)
+    //
+    // regs_ptr points to 8 uint64 integer registers.
+    // scratchpad_ptr points to the RandomX scratchpad in the same linear memory.
+    bool compile(const Program& program);
 
     const std::vector<uint8_t>& module() const { return module_; }
 
