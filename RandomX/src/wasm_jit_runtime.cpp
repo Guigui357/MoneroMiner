@@ -6,7 +6,6 @@
 #include <emscripten/emscripten.h>
 
 namespace randomx {
-
 namespace {
 
 EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
@@ -20,13 +19,17 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
         const bytes = HEAPU8.slice(module_ptr, module_ptr + module_size);
         const key = String(module_ptr) + ':' + String(module_size);
         const cache = Module.__randomxJitCache || (Module.__randomxJitCache = Object.create(null));
+        const stats = Module.__randomxJitStats || (Module.__randomxJitStats = {executions: 0});
         let fn = cache[key];
 
         if (!fn) {
+            console.log('[WASM-JIT] Compilando WebAssembly.Module, bytes=' + module_size);
             const wasmModule = new WebAssembly.Module(bytes);
+            console.log('[WASM-JIT] WebAssembly.Module = OK');
+
             const memory = Module['wasmMemory'];
             if (!memory) {
-                console.error('RandomX WASM JIT: wasmMemory unavailable');
+                console.error('[WASM-JIT] wasmMemory indisponivel');
                 return 0;
             }
 
@@ -41,16 +44,22 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
 
             fn = instance.exports.rx_jit;
             if (typeof fn !== 'function') {
-                console.error('RandomX WASM JIT: rx_jit export missing');
+                console.error('[WASM-JIT] rx_jit export ausente');
                 return 0;
             }
+
             cache[key] = fn;
+            console.log('[WASM-JIT] WebAssembly.Instance = OK; rx_jit = ACTIVE');
         }
 
         fn(regs_ptr, f_ptr, e_ptr, a_ptr, scratchpad_ptr);
+        stats.executions++;
+        if (stats.executions === 1 || (stats.executions % 10000) === 0) {
+            console.log('[WASM-JIT] execucoes=' + stats.executions);
+        }
         return 1;
     } catch (e) {
-        console.error('RandomX WASM JIT runtime error:', e);
+        console.error('[WASM-JIT] runtime error:', e);
         return 0;
     }
 });
