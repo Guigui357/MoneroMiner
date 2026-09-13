@@ -31,7 +31,7 @@ RANDOMX_DIR := $(shell if [ -d RandomX ]; then echo RandomX; elif [ -d randomx ]
 ifeq ($(RANDOMX_DIR),)
 $(error RandomX source directory not found. Looked for 'RandomX' and 'randomx' in $(PWD))
 endif
-RANDOMX_BUILD = $(RANDOMX_DIR)/build
+RANDOMX_BUILD = $(RANDOMX_DIR)/build-wasm
 RANDOMX_SRC_ABS := $(shell cd $(RANDOMX_DIR) && pwd)
 RANDOMX_CACHE := $(RANDOMX_BUILD)/CMakeCache.txt
 
