@@ -31,7 +31,12 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
             }
 
             const instance = new WebAssembly.Instance(wasmModule, {
-                env: { memory: memory }
+                env: {
+                    memory: memory,
+                    mulh_u64: (a, b) => BigInt.asUintN(64, (a * b) >> 64n),
+                    mulh_s64: (a, b) => BigInt.asUintN(64,
+                        (BigInt.asIntN(64, a) * BigInt.asIntN(64, b)) >> 64n)
+                }
             });
 
             fn = instance.exports.rx_jit;
@@ -67,7 +72,7 @@ bool WasmJit::execute(uint8_t* regs,
         static_cast<int>(module_.size()),
         static_cast<int>(reinterpret_cast<uintptr_t>(regs)),
         static_cast<int>(reinterpret_cast<uintptr_t>(f)),
-        static_cast<int>(reinterpret_cast<uintptr_t>(e)),
+        static_cast<int>(reinterpret_cast<uintptr_t>(a)),
         static_cast<int>(reinterpret_cast<uintptr_t>(a)),
         static_cast<int>(reinterpret_cast<uintptr_t>(scratchpad))) != 0;
 }
