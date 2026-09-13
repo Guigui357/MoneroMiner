@@ -44,7 +44,7 @@ if(EMSCRIPTEN)
     # Stage 3: the emitter produces executable WASM and the runtime bridge
     # compiles/instantiates it against Emscripten's linear memory.
     list(APPEND randomx_sources
-        src/wasm_jit.cpp
+        src/wasm_jit_v1.cpp
         src/wasm_jit_runtime.cpp
     )
 endif()
@@ -63,7 +63,7 @@ if(EMSCRIPTEN)
     message(STATUS "  RandomX WebAssembly build")
     message(STATUS "=========================================")
     message(STATUS "Native RandomX JIT: DISABLED")
-    message(STATUS "Backend: interpreter + WASM JIT stage 3 runtime")
+    message(STATUS "Backend: interpreter + WASM JIT V1 CBRANCH dispatcher")
 
     if(RANDOMX_WASM_SIMD)
         target_compile_options(randomx PRIVATE -msimd128)
@@ -183,7 +183,7 @@ if(EMSCRIPTEN)
             randomx
             PRIVATE
                 -pthread
-        )
+    )
 
     endif()
 
