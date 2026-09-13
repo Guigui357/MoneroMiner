@@ -157,21 +157,119 @@ static void emit_fmem_i32(std::vector<uint8_t>& c, uint32_t src,
 static int reg(uint8_t r) { return static_cast<int>(r % RegistersCount); }
 static int flt(uint8_t r) { return static_cast<int>(r % RegisterCountFlt); }
 
+static_assert(sizeof(Instruction::opcode) == sizeof(uint8_t),
+              "Instruction::opcode must be uint8_t");
+
+static const char* opcode_name(uint32_t op) {
+    if (op < ceil_IADD_RS)  return "IADD_RS";
+    if (op < ceil_IADD_M)   return "IADD_M";
+    if (op < ceil_ISUB_R)   return "ISUB_R";
+    if (op < ceil_ISUB_M)   return "ISUB_M";
+    if (op < ceil_IMUL_R)   return "IMUL_R";
+    if (op < ceil_IMUL_M)   return "IMUL_M";
+    if (op < ceil_IMULH_R)  return "IMULH_R";
+    if (op < ceil_IMULH_M)  return "IMULH_M";
+    if (op < ceil_ISMULH_R) return "ISMULH_R";
+    if (op < ceil_ISMULH_M) return "ISMULH_M";
+    if (op < ceil_IMUL_RCP) return "IMUL_RCP";
+    if (op < ceil_INEG_R)   return "INEG_R";
+    if (op < ceil_IXOR_R)   return "IXOR_R";
+    if (op < ceil_IXOR_M)   return "IXOR_M";
+    if (op < ceil_IROR_R)   return "IROR_R";
+    if (op < ceil_IROL_R)   return "IROL_R";
+    if (op < ceil_ISWAP_R)  return "ISWAP_R";
+    if (op < ceil_FSWAP_R)  return "FSWAP_R";
+    if (op < ceil_FADD_R)   return "FADD_R";
+    if (op < ceil_FADD_M)   return "FADD_M";
+    if (op < ceil_FSUB_R)   return "FSUB_R";
+    if (op < ceil_FSUB_M)   return "FSUB_M";
+    if (op < ceil_FSCAL_R)  return "FSCAL_R";
+    if (op < ceil_FMUL_R)   return "FMUL_R";
+    if (op < ceil_FDIV_M)   return "FDIV_M";
+    if (op < ceil_FSQRT_R)  return "FSQRT_R";
+    if (op < ceil_CBRANCH)  return "CBRANCH";
+    if (op < ceil_CFROUND)  return "CFROUND";
+    if (op < ceil_ISTORE)   return "ISTORE";
+    if (op < ceil_NOP)      return "NOP";
+
+    return "INVALID";
+}
+
+static bool validate_opcode(uint32_t op, uint32_t pc) {
+    // An actual RandomX opcode is exactly one byte.
+    if (op > 255u) {
+        std::cout
+            << "[WASM-JIT] INVALID OPCODE"
+            << " pc=" << pc
+            << " opcode=" << op
+            << " (0x" << std::hex << op << std::dec << ")"
+            << " -- impossible uint8_t value"
+            << std::endl;
+        return false;
+    }
+
+    const char* name = opcode_name(op);
+
+    std::cout
+        << "[WASM-JIT] pc=" << pc
+        << " opcode=" << op
+        << " (0x" << std::hex << op << std::dec << ")"
+        << " -> " << name
+        << std::endl;
+
+    return true;
+}
+
+static void print_opcode_limits() {
+    std::cout << "[WASM-JIT] ===== RandomX opcode limits =====" << std::endl;
+
+    std::cout << "[WASM-JIT] ceil_IADD_RS  = " << ceil_IADD_RS << std::endl;
+    std::cout << "[WASM-JIT] ceil_IADD_M   = " << ceil_IADD_M << std::endl;
+    std::cout << "[WASM-JIT] ceil_ISUB_R   = " << ceil_ISUB_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_ISUB_M   = " << ceil_ISUB_M << std::endl;
+    std::cout << "[WASM-JIT] ceil_IMUL_R   = " << ceil_IMUL_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_IMUL_M   = " << ceil_IMUL_M << std::endl;
+    std::cout << "[WASM-JIT] ceil_IMULH_R  = " << ceil_IMULH_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_IMULH_M  = " << ceil_IMULH_M << std::endl;
+    std::cout << "[WASM-JIT] ceil_ISMULH_R = " << ceil_ISMULH_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_ISMULH_M = " << ceil_ISMULH_M << std::endl;
+    std::cout << "[WASM-JIT] ceil_IMUL_RCP = " << ceil_IMUL_RCP << std::endl;
+    std::cout << "[WASM-JIT] ceil_INEG_R   = " << ceil_INEG_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_IXOR_R   = " << ceil_IXOR_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_IXOR_M   = " << ceil_IXOR_M << std::endl;
+    std::cout << "[WASM-JIT] ceil_IROR_R   = " << ceil_IROR_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_IROL_R   = " << ceil_IROL_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_ISWAP_R  = " << ceil_ISWAP_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_FSWAP_R  = " << ceil_FSWAP_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_FADD_R   = " << ceil_FADD_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_FADD_M   = " << ceil_FADD_M << std::endl;
+    std::cout << "[WASM-JIT] ceil_FSUB_R   = " << ceil_FSUB_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_FSUB_M   = " << ceil_FSUB_M << std::endl;
+    std::cout << "[WASM-JIT] ceil_FSCAL_R  = " << ceil_FSCAL_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_FMUL_R   = " << ceil_FMUL_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_FDIV_M   = " << ceil_FDIV_M << std::endl;
+    std::cout << "[WASM-JIT] ceil_FSQRT_R  = " << ceil_FSQRT_R << std::endl;
+    std::cout << "[WASM-JIT] ceil_CBRANCH  = " << ceil_CBRANCH << std::endl;
+    std::cout << "[WASM-JIT] ceil_CFROUND  = " << ceil_CFROUND << std::endl;
+    std::cout << "[WASM-JIT] ceil_ISTORE   = " << ceil_ISTORE << std::endl;
+    std::cout << "[WASM-JIT] ceil_NOP      = " << ceil_NOP << std::endl;
+
+    std::cout << "[WASM-JIT] ================================" << std::endl;
+}
+
 static bool supported(const Instruction& ins) {
-    const int op = ins.opcode;
-    if (op < ceil_FSWAP_R) return true;
-    if (op < ceil_FADD_R) return true;
-    if (op < ceil_FADD_M) return true;
-    if (op < ceil_FSUB_R) return true;
-    if (op < ceil_FSUB_M) return true;
-    if (op < ceil_FSCAL_R) return true;
-    if (op < ceil_FMUL_R) return true;
-    if (op < ceil_FDIV_M) return true;
-    if (op < ceil_FSQRT_R) return true;
-    if (op < ceil_CBRANCH) return true;
-    if (op < ceil_CFROUND) return false;
-    if (op < ceil_ISTORE) return true;
-    if (op < ceil_NOP) return true;
+    const uint32_t op = static_cast<uint32_t>(ins.opcode);
+
+    // All valid RandomX opcodes except CBRANCH are currently supported
+    // by this straight-line WASM JIT.
+    if (op >= ceil_CBRANCH && op < ceil_CFROUND) {
+        return false;
+    }
+
+    if (op >= ceil_NOP) {
+        return false;
+    }
+
     return true;
 }
 
@@ -180,11 +278,32 @@ static bool supported(const Instruction& ins) {
 bool WasmJit::compile(const Program& program) {
     module_.clear();
 
+    print_opcode_limits();
+
+    std::cout
+        << "[WASM-JIT] Instruction::opcode size="
+        << sizeof(Instruction::opcode)
+        << " byte(s)"
+        << std::endl;
+
     for (uint32_t pc = 0; pc < program.getSize(); ++pc) {
         const Instruction& ins = program(static_cast<int>(pc));
+
+        const uint32_t op = static_cast<uint32_t>(ins.opcode);
+
+        if (!validate_opcode(op, pc)) {
+            return false;
+        }
+
         if (!supported(ins)) {
-            std::cout << "[WASM-JIT] UNSUPPORTED pc=" << pc
-                      << " opcode=" << static_cast<int>(ins.opcode) << std::endl;
+            std::cout
+                << "[WASM-JIT] UNSUPPORTED"
+                << " pc=" << pc
+                << " opcode=" << op
+                << " (0x" << std::hex << op << std::dec << ")"
+                << " instruction=" << opcode_name(op)
+                << std::endl;
+
             return false;
         }
     }
