@@ -117,6 +117,7 @@ static bool supported(const Instruction& ins) {
     const int op = ins.opcode;
     if (op < ceil_IMULH_R) return true;
     if (op >= ceil_IMUL_RCP && op < ceil_FSWAP_R) return true;
+    if (op >= ceil_ISTORE && op < ceil_NOP) return true;
     if (op >= ceil_NOP) return true;
     return false;
 }
@@ -150,12 +151,12 @@ bool WasmJit::compile(const Program& program) {
             local_get(code, 2 + dst);
             local_get(code, 2 + src);
             i64_const(code, static_cast<int64_t>(ins.getModShift()));
-            code.push_back(0x86); // i64.shl
+            code.push_back(0x86);
             if (dst == RegisterNeedsDisplacement) {
                 i64_const(code, simm);
-                code.push_back(0x7c); // i64.add
+                code.push_back(0x7c);
             }
-            code.push_back(0x7c); // i64.add
+            code.push_back(0x7c);
             local_set(code, 2 + dst);
         }
         else if (op < ceil_IADD_M) {
@@ -164,14 +165,14 @@ bool WasmJit::compile(const Program& program) {
             const uint32_t mask = zero ? ScratchpadL3Mask :
                                   (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
             emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
-            code.push_back(0x7c); // i64.add
+            code.push_back(0x7c);
             local_set(code, 2 + dst);
         }
         else if (op < ceil_ISUB_R) {
             local_get(code, 2 + dst);
             if (src == dst) i64_const(code, simm);
             else local_get(code, 2 + src);
-            code.push_back(0x7d); // i64.sub
+            code.push_back(0x7d);
             local_set(code, 2 + dst);
         }
         else if (op < ceil_ISUB_M) {
@@ -187,7 +188,7 @@ bool WasmJit::compile(const Program& program) {
             local_get(code, 2 + dst);
             if (src == dst) i64_const(code, simm);
             else local_get(code, 2 + src);
-            code.push_back(0x7e); // i64.mul
+            code.push_back(0x7e);
             local_set(code, 2 + dst);
         }
         else if (op < ceil_IMUL_M) {
@@ -200,8 +201,6 @@ bool WasmJit::compile(const Program& program) {
             local_set(code, 2 + dst);
         }
         else if (op < ceil_IMUL_RCP) {
-            // IMULH_R/IMULH_M/ISMULH_R/ISMULH_M are Stage 3. Their exact
-            // 128-bit high-product lowering is intentionally not guessed here.
             return false;
         }
         else if (op < ceil_INEG_R) {
@@ -214,7 +213,6 @@ bool WasmJit::compile(const Program& program) {
             }
         }
         else if (op < ceil_IXOR_R) {
-            // INEG_R: 0 - dst, modulo 2^64.
             i64_const(code, 0);
             local_get(code, 2 + dst);
             code.push_back(0x7d);
@@ -224,7 +222,7 @@ bool WasmJit::compile(const Program& program) {
             local_get(code, 2 + dst);
             if (src == dst) i64_const(code, simm);
             else local_get(code, 2 + src);
-            code.push_back(0x85); // i64.xor
+            code.push_back(0x85);
             local_set(code, 2 + dst);
         }
         else if (op < ceil_IROR_R) {
@@ -240,7 +238,7 @@ bool WasmJit::compile(const Program& program) {
             local_get(code, 2 + dst);
             if (src == dst) i64_const(code, static_cast<int64_t>(ins.getImm32()));
             else local_get(code, 2 + src);
-            code.push_back(0x8a); // i64.rotr
+            code.push_back(0x8a);
             local_set(code, 2 + dst);
         }
         else if (op < ceil_ISWAP_R) {
@@ -251,8 +249,23 @@ bool WasmJit::compile(const Program& program) {
                 local_set(code, 2 + src);
             }
         }
-        else {
+        else if (op < ceil_FSWAP_R) {
             return false;
+        }
+        else if (op < ceil_ISTORE) {
+            return false;
+        }
+        else if (op < ceil_NOP) {
+            // ISTORE: [scratchpad + ((dst + imm) & mask)] = src.
+            const uint32_t mask = (ins.getModCond() >= StoreL3Condition)
+                                      ? ScratchpadL3Mask
+                                      : (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
+            emit_address(code, static_cast<uint32_t>(dst), simm, mask, false);
+            local_get(code, 2 + src);
+            i64_store(code);
+        }
+        else {
+            // NOP.
         }
     }
 
