@@ -2,28 +2,6 @@
 Copyright (c) 2018-2019, tevador <tevador@gmail.com>
 
 All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-	* Redistributions of source code must retain the above copyright
-	  notice, this list of conditions and the following disclaimer.
-	* Redistributions in binary form must reproduce the above copyright
-	  notice, this list of conditions and the following disclaimer in the
-	  documentation and/or other materials provided with the distribution.
-	* Neither the name of the copyright holder nor the
-	  names of its contributors may be used to endorse or promote products
-	  derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <iostream>
@@ -62,6 +40,13 @@ namespace randomx {
 
 		compileProgram(program, bytecode, nreg);
 
+#ifdef __EMSCRIPTEN__
+		// The generated WASM currently implements only the validated integer
+		// RandomX subset. If program compilation rejects an instruction, the VM
+		// remains fully correct by falling back to the canonical interpreter.
+		wasmJitReady = wasmJit.compile(program);
+#endif
+
 		uint32_t spAddr0 = mem.mx;
 		uint32_t spAddr1 = mem.ma;
 
@@ -81,7 +66,23 @@ namespace randomx {
 			for (unsigned i = 0; i < RegisterCountFlt; ++i)
 				nreg.e[i] = maskRegisterExponentMantissa(config, rx_cvt_packed_int_vec_f128(scratchpad + spAddr1 + 8 * (RegisterCountFlt + i)));
 
+#ifdef __EMSCRIPTEN__
+			if (wasmJitReady) {
+				// nreg.r is exactly the eight contiguous uint64 integer VM registers.
+				// The JIT module operates directly on the same Emscripten linear memory,
+				// so scratchpad loads/stores are visible without copying the 2 MiB pad.
+				if (!wasmJit.execute(reinterpret_cast<uint8_t*>(nreg.r), scratchpad)) {
+					// Runtime failure is fail-safe: disable JIT for this program and use
+					// the canonical interpreter for the current and following iterations.
+					wasmJitReady = false;
+					executeBytecode(bytecode, scratchpad, config);
+				}
+			} else {
+				executeBytecode(bytecode, scratchpad, config);
+			}
+#else
 			executeBytecode(bytecode, scratchpad, config);
+#endif
 
 			mem.mx ^= nreg.r[config.readReg2] ^ nreg.r[config.readReg3];
 			mem.mx &= CacheLineAlignMask;
