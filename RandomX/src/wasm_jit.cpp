@@ -208,15 +208,6 @@ static bool validate_opcode(uint32_t op, uint32_t pc) {
         return false;
     }
 
-    const char* name = opcode_name(op);
-
-    std::cout
-        << "[WASM-JIT] pc=" << pc
-        << " opcode=" << op
-        << " (0x" << std::hex << op << std::dec << ")"
-        << " -> " << name
-        << std::endl;
-
     return true;
 }
 
