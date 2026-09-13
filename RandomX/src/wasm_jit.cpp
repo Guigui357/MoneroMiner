@@ -278,14 +278,6 @@ static bool supported(const Instruction& ins) {
 bool WasmJit::compile(const Program& program) {
     module_.clear();
 
-    print_opcode_limits();
-
-    std::cout
-        << "[WASM-JIT] Instruction::opcode size="
-        << sizeof(Instruction::opcode)
-        << " byte(s)"
-        << std::endl;
-
     for (uint32_t pc = 0; pc < program.getSize(); ++pc) {
         const Instruction& ins = program(static_cast<int>(pc));
 
