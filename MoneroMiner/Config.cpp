@@ -121,6 +121,64 @@ bool validateConfig(const Config& config) {
     return true;
 }
 
+#ifdef __EMSCRIPTEN__
+
+#include <emscripten/emscripten.h>
+
+extern "C" {
+
+EMSCRIPTEN_KEEPALIVE
+int setWalletFromWeb(const char* wallet)
+{
+    if (wallet == nullptr)
+        return 0;
+
+    std::string value(wallet);
+
+    // Remove espaços de copiar/colar.
+    const auto first = value.find_first_not_of(" \t\r\n");
+
+    if (first == std::string::npos)
+        return 0;
+
+    const auto last = value.find_last_not_of(" \t\r\n");
+
+    value = value.substr(first, last - first + 1);
+
+    /*
+     * Monero mainnet:
+     *
+     * 4... = endereço principal
+     * 8... = subaddress
+     *
+     * Ambos possuem 95 caracteres.
+     */
+    if (value.size() != 95)
+        return 0;
+
+    if (value[0] != '4' && value[0] != '8')
+        return 0;
+
+    config.walletAddress = value;
+
+    std::cout
+        << "[WASM] Carteira configurada pela Web UI: "
+        << config.walletAddress
+        << std::endl;
+
+    return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE
+const char* getWalletFromWeb()
+{
+    return config.walletAddress.c_str();
+}
+
+}
+
+#endif
+
 void Config::printConfig() const {
     std::cout << "Current configuration:" << std::endl;
     std::cout << "Pool address: " << poolAddress << ":" << poolPort << std::endl;
