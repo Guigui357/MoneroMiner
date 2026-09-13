@@ -127,8 +127,6 @@ static bool supported(const Instruction& ins) {
 bool WasmJit::compile(const Program& program) {
     module_.clear();
 
-    // Fail closed: unsupported instructions never produce a partially JITed
-    // program that could silently change the RandomX result.
     for (uint32_t pc = 0; pc < program.getSize(); ++pc) {
         if (!supported(program(static_cast<int>(pc)))) return false;
     }
@@ -256,16 +254,12 @@ bool WasmJit::compile(const Program& program) {
             return false;
         }
         else if (op < ceil_NOP) {
-            // ISTORE: [scratchpad + ((dst + imm) & mask)] = src.
             const uint32_t mask = (ins.getModCond() >= StoreL3Condition)
                                       ? ScratchpadL3Mask
                                       : (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
             emit_address(code, static_cast<uint32_t>(dst), simm, mask, false);
             local_get(code, 2 + src);
             i64_store(code);
-        }
-        else {
-            // NOP.
         }
     }
 
@@ -292,8 +286,10 @@ bool WasmJit::compile(const Program& program) {
     bytes(imports, "env", 3);
     bytes(imports, "memory", 6);
     imports.push_back(0x02);
-    imports.push_back(0x00);
+    // Shared Emscripten pthread memory: min=1 page, max=32768 pages (2 GiB).
+    imports.push_back(0x03);
     uleb(imports, 1);
+    uleb(imports, 32768);
     section(module_, 2, imports);
 
     std::vector<uint8_t> funcs;
