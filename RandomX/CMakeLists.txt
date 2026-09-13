@@ -40,6 +40,15 @@ set(randomx_sources
 # WebAssembly / Emscripten
 # ============================================================
 
+if(EMSCRIPTEN)
+    # Stage 1 WASM JIT emitter. It is deliberately separate from the
+    # RandomX VM for now; the next stage will connect it to program
+    # generation/execution after canonical vectors are validated.
+    list(APPEND randomx_sources
+        src/wasm_jit.cpp
+    )
+endif()
+
 add_library(randomx STATIC
     ${randomx_sources}
 )
@@ -54,7 +63,7 @@ if(EMSCRIPTEN)
     message(STATUS "  RandomX WebAssembly build")
     message(STATUS "=========================================")
     message(STATUS "Native RandomX JIT: DISABLED")
-    message(STATUS "Backend: interpreted VM")
+    message(STATUS "Backend: interpreter + WASM JIT stage 1")
 
     if(RANDOMX_WASM_SIMD)
         target_compile_options(randomx PRIVATE -msimd128)
