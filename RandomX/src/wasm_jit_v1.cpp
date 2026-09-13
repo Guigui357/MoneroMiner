@@ -4,6 +4,40 @@
 
 #include "bytecode_machine.hpp"
 #include "reciprocal.h"
+#include "instruction.hpp"
+
+using namespace randomx;
+
+#define IADD_RS   static_cast<uint8_t>(InstructionType::IADD_RS)
+#define IADD_M    static_cast<uint8_t>(InstructionType::IADD_M)
+#define ISUB_R    static_cast<uint8_t>(InstructionType::ISUB_R)
+#define ISUB_M    static_cast<uint8_t>(InstructionType::ISUB_M)
+#define IMUL_R    static_cast<uint8_t>(InstructionType::IMUL_R)
+#define IMUL_M    static_cast<uint8_t>(InstructionType::IMUL_M)
+#define IMULH_R   static_cast<uint8_t>(InstructionType::IMULH_R)
+#define IMULH_M   static_cast<uint8_t>(InstructionType::IMULH_M)
+#define ISMULH_R  static_cast<uint8_t>(InstructionType::ISMULH_R)
+#define ISMULH_M  static_cast<uint8_t>(InstructionType::ISMULH_M)
+#define IMUL_RCP  static_cast<uint8_t>(InstructionType::IMUL_RCP)
+#define INEG_R    static_cast<uint8_t>(InstructionType::INEG_R)
+#define IXOR_R    static_cast<uint8_t>(InstructionType::IXOR_R)
+#define IXOR_M    static_cast<uint8_t>(InstructionType::IXOR_M)
+#define IROR_R    static_cast<uint8_t>(InstructionType::IROR_R)
+#define IROL_R    static_cast<uint8_t>(InstructionType::IROL_R)
+#define ISWAP_R   static_cast<uint8_t>(InstructionType::ISWAP_R)
+#define FSWAP_R   static_cast<uint8_t>(InstructionType::FSWAP_R)
+#define FADD_R    static_cast<uint8_t>(InstructionType::FADD_R)
+#define FADD_M    static_cast<uint8_t>(InstructionType::FADD_M)
+#define FSUB_R    static_cast<uint8_t>(InstructionType::FSUB_R)
+#define FSUB_M    static_cast<uint8_t>(InstructionType::FSUB_M)
+#define FSCAL_R   static_cast<uint8_t>(InstructionType::FSCAL_R)
+#define FMUL_R    static_cast<uint8_t>(InstructionType::FMUL_R)
+#define FDIV_M    static_cast<uint8_t>(InstructionType::FDIV_M)
+#define FSQRT_R   static_cast<uint8_t>(InstructionType::FSQRT_R)
+#define CBRANCH   static_cast<uint8_t>(InstructionType::CBRANCH)
+#define CFROUND   static_cast<uint8_t>(InstructionType::CFROUND)
+#define ISTORE    static_cast<uint8_t>(InstructionType::ISTORE)
+#define NOP       static_cast<uint8_t>(InstructionType::NOP)
 
 namespace randomx {
 namespace {
@@ -127,7 +161,7 @@ static void emit_instruction(std::vector<uint8_t>& c, const Instruction& ins, ui
         get(c,5+dst);if(src==dst)i64c(c,static_cast<int64_t>(ins.getImm32()));else get(c,5+src);c.push_back(0x88);set(c,5+dst);
     } else if (op < ceil_IROL_R) {
         get(c,5+dst);if(src==dst)i64c(c,static_cast<int64_t>(ins.getImm32()));else get(c,5+src);c.push_back(0x89);set(c,5+dst);
-    } else if (op < ceil_ISWAP_R) {
+    } else if (op < ceil_ISWAP_R - 1) {
         if(src!=dst){get(c,5+dst);get(c,5+src);set(c,5+dst);set(c,5+src);}
     } else if (op < ceil_FSWAP_R) {
         int t=(ins.dst%RegistersCount)<RegisterCountFlt?13+fdst:17+fdst;
