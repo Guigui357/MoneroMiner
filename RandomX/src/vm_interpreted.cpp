@@ -41,9 +41,9 @@ namespace randomx {
 		compileProgram(program, bytecode, nreg);
 
 #ifdef __EMSCRIPTEN__
-		// The generated WASM currently implements only the validated integer
-		// RandomX subset. If program compilation rejects an instruction, the VM
-		// remains fully correct by falling back to the canonical interpreter.
+		// The WASM JIT accepts only instructions for which the generated module
+		// preserves the interpreter semantics. Unsupported FP-memory/control
+		// instructions automatically use the canonical interpreter.
 		wasmJitReady = wasmJit.compile(program);
 #endif
 
@@ -68,12 +68,13 @@ namespace randomx {
 
 #ifdef __EMSCRIPTEN__
 			if (wasmJitReady) {
-				// nreg.r is exactly the eight contiguous uint64 integer VM registers.
-				// The JIT module operates directly on the same Emscripten linear memory,
-				// so scratchpad loads/stores are visible without copying the 2 MiB pad.
-				if (!wasmJit.execute(reinterpret_cast<uint8_t*>(nreg.r), scratchpad)) {
-					// Runtime failure is fail-safe: disable JIT for this program and use
-					// the canonical interpreter for the current and following iterations.
+				// nreg.r/f/e/a are all inside the Emscripten linear memory. The JIT
+				// therefore operates directly on the VM register file and scratchpad.
+				if (!wasmJit.execute(reinterpret_cast<uint8_t*>(nreg.r),
+				                     reinterpret_cast<uint8_t*>(nreg.f),
+				                     reinterpret_cast<uint8_t*>(nreg.e),
+				                     reinterpret_cast<uint8_t*>(nreg.a),
+				                     scratchpad)) {
 					wasmJitReady = false;
 					executeBytecode(bytecode, scratchpad, config);
 				}
