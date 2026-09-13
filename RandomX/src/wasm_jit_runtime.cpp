@@ -33,12 +33,104 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
                 return 0;
             }
 
+            const fpBits = new DataView(new ArrayBuffer(8));
+            const bitsToF64 = (bits) => {
+                fpBits.setBigUint64(0, BigInt.asUintN(64, bits), true);
+                return fpBits.getFloat64(0, true);
+            };
+            const f64ToBits = (value) => {
+                fpBits.setFloat64(0, value, true);
+                return fpBits.getBigUint64(0, true);
+            };
+            const ordered = (bits) => {
+                bits = BigInt.asUintN(64, bits);
+                return (bits >> 63n) ? (~bits & ((1n << 64n) - 1n)) : (bits | (1n << 63n));
+            };
+            const fromOrdered = (x) => {
+                const sign = (x >> 63n) & 1n;
+                return sign ? (x & ((1n << 63n) - 1n)) : (~x & ((1n << 64n) - 1n));
+            };
+            const nextBits = (bits, direction) => {
+                const v = bitsToF64(bits);
+                if (Number.isNaN(v)) return bits;
+                if (v === 0 && direction < 0) return 0x8000000000000000n;
+                if (v === 0 && direction > 0) return 0x0000000000000001n;
+                let o = ordered(bits);
+                o += direction > 0 ? 1n : -1n;
+                return fromOrdered(o);
+            };
+            const exact = (bits) => {
+                bits = BigInt.asUintN(64, bits);
+                const sign = (bits >> 63n) ? -1n : 1n;
+                const rawExp = Number((bits >> 52n) & 0x7ffn);
+                const frac = bits & 0xfffffffffffffn;
+                if (rawExp === 0x7ff) return null;
+                const mant = rawExp === 0 ? frac : (frac | (1n << 52n));
+                const exp = rawExp === 0 ? -1074 : rawExp - 1075;
+                return {n: sign * mant, e: exp};
+            };
+            const cmpRational = (a, b) => {
+                if (a.n === 0n && b.n === 0n) return 0;
+                if (a.n < 0n && b.n >= 0n) return -1;
+                if (a.n >= 0n && b.n < 0n) return 1;
+                const an = a.n < 0n ? -a.n : a.n;
+                const bn = b.n < 0n ? -b.n : b.n;
+                const e = Math.min(a.e, b.e);
+                const x = an << BigInt(a.e - e);
+                const y = bn << BigInt(b.e - e);
+                if (x === y) return 0;
+                const r = x < y ? -1 : 1;
+                return a.n < 0n ? -r : r;
+            };
+            const roundDirected = (aBits, bBits, nearestBits, mode, op) => {
+                if (mode === 0) return nearestBits;
+                const da = exact(aBits), db = exact(bBits);
+                if (!da || !db) return nearestBits;
+                let target;
+                if (op === 0 || op === 1) {
+                    const e = Math.min(da.e, db.e);
+                    const an = da.n << BigInt(da.e - e);
+                    const bn = db.n << BigInt(db.e - e);
+                    target = {n: op === 0 ? an + bn : an - bn, e};
+                } else if (op === 2) {
+                    target = {n: da.n * db.n, e: da.e + db.e};
+                } else {
+                    return nearestBits;
+                }
+                const cand = exact(nearestBits);
+                if (!cand) return nearestBits;
+                const cmp = cmpRational(cand, target);
+                let adjust = 0;
+                if (mode === 1 && cmp > 0) adjust = -1;
+                if (mode === 2 && cmp < 0) adjust = 1;
+                if (mode === 3) {
+                    if (target.n >= 0n && cmp > 0) adjust = -1;
+                    if (target.n < 0n && cmp < 0) adjust = 1;
+                }
+                return adjust ? nextBits(nearestBits, adjust) : nearestBits;
+            };
+            const fpBin = (aBits, bBits, mode, op) => {
+                const a = bitsToF64(aBits), b = bitsToF64(bBits);
+                let r;
+                if (op === 0) r = a + b;
+                else if (op === 1) r = a - b;
+                else if (op === 2) r = a * b;
+                else r = a / b;
+                return roundDirected(aBits, bBits, f64ToBits(r), mode | 0, op);
+            };
+            const fpSqrt = (aBits, mode) => f64ToBits(Math.sqrt(bitsToF64(aBits)));
+
             const instance = new WebAssembly.Instance(wasmModule, {
                 env: {
                     memory: memory,
                     mulh_u64: (a, b) => BigInt.asUintN(64, (a * b) >> 64n),
                     mulh_s64: (a, b) => BigInt.asUintN(64,
-                        (BigInt.asIntN(64, a) * BigInt.asIntN(64, b)) >> 64n)
+                        (BigInt.asIntN(64, a) * BigInt.asIntN(64, b)) >> 64n),
+                    fp_add: (a, b, mode) => fpBin(a, b, mode, 0),
+                    fp_sub: (a, b, mode) => fpBin(a, b, mode, 1),
+                    fp_mul: (a, b, mode) => fpBin(a, b, mode, 2),
+                    fp_div: (a, b, mode) => fpBin(a, b, mode, 3),
+                    fp_sqrt: (a, mode) => fpSqrt(a, mode)
                 }
             });
 
