@@ -41,10 +41,23 @@ namespace randomx {
 		compileProgram(program, bytecode, nreg);
 
 #ifdef __EMSCRIPTEN__
-		// The WASM JIT accepts only instructions for which the generated module
-		// preserves the interpreter semantics. Unsupported FP-memory/control
-		// instructions automatically use the canonical interpreter.
-		wasmJitReady = wasmJit.compile(program);
+        std::cout << "[WASM-JIT] =============================" << std::endl;
+        std::cout << "[WASM-JIT] INICIANDO COMPILE" << std::endl;
+
+        wasmJitReady = wasmJit.compile(program);
+
+        std::cout << "[WASM-JIT] COMPILE TERMINOU" << std::endl;
+        std::cout << "[WASM-JIT] wasmJitReady = "
+                  << (wasmJitReady ? "TRUE" : "FALSE")
+                  << std::endl;
+
+        if (wasmJitReady) {
+            std::cout << "[WASM-JIT] *** JIT ESTA PRONTO ***" << std::endl;
+        } else {
+            std::cout << "[WASM-JIT] *** JIT NAO ESTA PRONTO ***" << std::endl;
+        }
+
+        std::cout << "[WASM-JIT] =============================" << std::endl;
 #endif
 
 		uint32_t spAddr0 = mem.mx;
