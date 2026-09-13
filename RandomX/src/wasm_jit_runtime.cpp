@@ -72,7 +72,7 @@ bool WasmJit::execute(uint8_t* regs,
         static_cast<int>(module_.size()),
         static_cast<int>(reinterpret_cast<uintptr_t>(regs)),
         static_cast<int>(reinterpret_cast<uintptr_t>(f)),
-        static_cast<int>(reinterpret_cast<uintptr_t>(a)),
+        static_cast<int>(reinterpret_cast<uintptr_t>(e)),
         static_cast<int>(reinterpret_cast<uintptr_t>(a)),
         static_cast<int>(reinterpret_cast<uintptr_t>(scratchpad))) != 0;
 }
