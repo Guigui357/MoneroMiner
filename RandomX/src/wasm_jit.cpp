@@ -73,6 +73,25 @@ static void i64_store(std::vector<uint8_t>& c) {
     uleb(c, 0);
 }
 
+static void v128_load(std::vector<uint8_t>& c) {
+    c.push_back(0xfd);
+    uleb(c, 0x00);
+    uleb(c, 4); // 16-byte natural alignment
+    uleb(c, 0);
+}
+
+static void v128_store(std::vector<uint8_t>& c) {
+    c.push_back(0xfd);
+    uleb(c, 0x0b);
+    uleb(c, 4);
+    uleb(c, 0);
+}
+
+static void v128_op(std::vector<uint8_t>& c, uint32_t op) {
+    c.push_back(0xfd);
+    uleb(c, op);
+}
+
 static void load_reg(std::vector<uint8_t>& c, uint32_t r) {
     local_get(c, 0);
     i32_const(c, static_cast<int32_t>(r * 8));
@@ -87,13 +106,29 @@ static void store_reg(std::vector<uint8_t>& c, uint32_t r) {
     i64_store(c);
 }
 
+static void load_fp(std::vector<uint8_t>& c, uint32_t ptr_local,
+                    uint32_t index) {
+    local_get(c, ptr_local);
+    i32_const(c, static_cast<int32_t>(index * 16));
+    c.push_back(0x6a);
+    v128_load(c);
+}
+
+static void store_fp(std::vector<uint8_t>& c, uint32_t ptr_local,
+                     uint32_t index) {
+    local_get(c, ptr_local);
+    i32_const(c, static_cast<int32_t>(index * 16));
+    c.push_back(0x6a);
+    v128_store(c);
+}
+
 static void emit_address(std::vector<uint8_t>& c, uint32_t src,
                          int64_t imm, uint32_t mask, bool zero_register) {
-    local_get(c, 1);
+    local_get(c, 4); // scratchpad pointer
     if (zero_register) {
         i64_const(c, imm);
     } else {
-        local_get(c, 2 + src);
+        local_get(c, 5 + src);
         i64_const(c, imm);
         c.push_back(0x7c);
     }
@@ -113,13 +148,30 @@ static int reg(uint8_t r) {
     return static_cast<int>(r % RegistersCount);
 }
 
+static int flt(uint8_t r) {
+    return static_cast<int>(r % RegisterCountFlt);
+}
+
 static bool supported(const Instruction& ins) {
     const int op = ins.opcode;
-    if (op < ceil_IMULH_R) return true;
-    if (op >= ceil_IMUL_RCP && op < ceil_FSWAP_R) return true;
-    if (op >= ceil_ISTORE && op < ceil_NOP) return true;
-    if (op >= ceil_NOP) return true;
-    return false;
+    if (op < ceil_FSWAP_R) return true;
+    if (op < ceil_FADD_R) return true;
+    if (op < ceil_FADD_M) return false; // FADD_R
+    if (op < ceil_FSUB_R) return false; // FADD_M not yet lowered
+    if (op < ceil_FSUB_M) return true;  // FSUB_R
+    if (op < ceil_FSCAL_R) return false; // FSUB_M
+    if (op < ceil_FMUL_R) return true;  // FSCAL_R
+    if (op < ceil_FDIV_M) return true;  // FMUL_R
+    if (op < ceil_FSQRT_R) return false; // FDIV_M
+    if (op < ceil_CBRANCH) return true;  // FSQRT_R
+    if (op < ceil_ISTORE) return false;  // CBRANCH/CFROUND
+    if (op < ceil_NOP) return true;      // ISTORE
+    return true;
+}
+
+static void emit_i64_mulh_import(std::vector<uint8_t>& c, uint32_t fn) {
+    c.push_back(0x10);
+    uleb(c, fn);
 }
 
 } // namespace
@@ -133,9 +185,19 @@ bool WasmJit::compile(const Program& program) {
 
     std::vector<uint8_t> code;
 
+    // Params: 0=regs, 1=f, 2=e, 3=a, 4=scratchpad.
+    // Locals: 5..12 = integer registers, 13..24 = f/e/a v128 registers.
     for (int r = 0; r < RegistersCount; ++r) {
         load_reg(code, static_cast<uint32_t>(r));
-        local_set(code, static_cast<uint32_t>(2 + r));
+        local_set(code, static_cast<uint32_t>(5 + r));
+    }
+    for (int r = 0; r < RegisterCountFlt; ++r) {
+        load_fp(code, 1, static_cast<uint32_t>(r));
+        local_set(code, static_cast<uint32_t>(13 + r));
+        load_fp(code, 2, static_cast<uint32_t>(r));
+        local_set(code, static_cast<uint32_t>(17 + r));
+        load_fp(code, 3, static_cast<uint32_t>(r));
+        local_set(code, static_cast<uint32_t>(21 + r));
     }
 
     for (uint32_t pc = 0; pc < program.getSize(); ++pc) {
@@ -143,112 +205,209 @@ bool WasmJit::compile(const Program& program) {
         const int op = ins.opcode;
         const int dst = reg(ins.dst);
         const int src = reg(ins.src);
+        const int fdst = flt(ins.dst);
+        const int fsrc = flt(ins.src);
         const int64_t simm = static_cast<int64_t>(static_cast<int32_t>(ins.getImm32()));
 
         if (op < ceil_IADD_RS) {
-            local_get(code, 2 + dst);
-            local_get(code, 2 + src);
+            local_get(code, 5 + dst);
+            local_get(code, 5 + src);
             i64_const(code, static_cast<int64_t>(ins.getModShift()));
-            code.push_back(0x86);
+            code.push_back(0x86); // i64.shl
             if (dst == RegisterNeedsDisplacement) {
                 i64_const(code, simm);
-                code.push_back(0x7c);
+                code.push_back(0x7c); // i64.add
             }
             code.push_back(0x7c);
-            local_set(code, 2 + dst);
+            local_set(code, 5 + dst);
         }
         else if (op < ceil_IADD_M) {
-            local_get(code, 2 + dst);
+            local_get(code, 5 + dst);
             const bool zero = src == dst;
             const uint32_t mask = zero ? ScratchpadL3Mask :
                                   (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
             emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
             code.push_back(0x7c);
-            local_set(code, 2 + dst);
+            local_set(code, 5 + dst);
         }
         else if (op < ceil_ISUB_R) {
-            local_get(code, 2 + dst);
+            local_get(code, 5 + dst);
             if (src == dst) i64_const(code, simm);
-            else local_get(code, 2 + src);
+            else local_get(code, 5 + src);
             code.push_back(0x7d);
-            local_set(code, 2 + dst);
+            local_set(code, 5 + dst);
         }
         else if (op < ceil_ISUB_M) {
-            local_get(code, 2 + dst);
+            local_get(code, 5 + dst);
             const bool zero = src == dst;
             const uint32_t mask = zero ? ScratchpadL3Mask :
                                   (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
             emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
             code.push_back(0x7d);
-            local_set(code, 2 + dst);
+            local_set(code, 5 + dst);
         }
         else if (op < ceil_IMUL_R) {
-            local_get(code, 2 + dst);
+            local_get(code, 5 + dst);
             if (src == dst) i64_const(code, simm);
-            else local_get(code, 2 + src);
+            else local_get(code, 5 + src);
             code.push_back(0x7e);
-            local_set(code, 2 + dst);
+            local_set(code, 5 + dst);
         }
         else if (op < ceil_IMUL_M) {
-            local_get(code, 2 + dst);
+            local_get(code, 5 + dst);
             const bool zero = src == dst;
             const uint32_t mask = zero ? ScratchpadL3Mask :
                                   (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
             emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
             code.push_back(0x7e);
-            local_set(code, 2 + dst);
+            local_set(code, 5 + dst);
         }
-        else if (op < ceil_IMUL_RCP) {
-            return false;
+        else if (op < ceil_IMULH_R) {
+            local_get(code, 5 + dst);
+            local_get(code, 5 + src);
+            emit_i64_mulh_import(code, 0); // unsigned high 64 bits
+            local_set(code, 5 + dst);
         }
-        else if (op < ceil_INEG_R) {
-            const uint32_t divisor = ins.getImm32();
-            if (!isZeroOrPowerOf2(divisor)) {
-                local_get(code, 2 + dst);
-                i64_const(code, static_cast<int64_t>(randomx_reciprocal(divisor)));
-                code.push_back(0x7e);
-                local_set(code, 2 + dst);
-            }
-        }
-        else if (op < ceil_IXOR_R) {
-            i64_const(code, 0);
-            local_get(code, 2 + dst);
-            code.push_back(0x7d);
-            local_set(code, 2 + dst);
-        }
-        else if (op < ceil_IXOR_M) {
-            local_get(code, 2 + dst);
-            if (src == dst) i64_const(code, simm);
-            else local_get(code, 2 + src);
-            code.push_back(0x85);
-            local_set(code, 2 + dst);
-        }
-        else if (op < ceil_IROR_R) {
-            local_get(code, 2 + dst);
+        else if (op < ceil_IMULH_M) {
+            local_get(code, 5 + dst);
             const bool zero = src == dst;
             const uint32_t mask = zero ? ScratchpadL3Mask :
                                   (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
             emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
-            code.push_back(0x85);
-            local_set(code, 2 + dst);
+            emit_i64_mulh_import(code, 0);
+            local_set(code, 5 + dst);
+        }
+        else if (op < ceil_ISMULH_R) {
+            local_get(code, 5 + dst);
+            local_get(code, 5 + src);
+            emit_i64_mulh_import(code, 1); // signed high 64 bits
+            local_set(code, 5 + dst);
+        }
+        else if (op < ceil_ISMULH_M) {
+            local_get(code, 5 + dst);
+            const bool zero = src == dst;
+            const uint32_t mask = zero ? ScratchpadL3Mask :
+                                  (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
+            emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
+            emit_i64_mulh_import(code, 1);
+            local_set(code, 5 + dst);
+        }
+        else if (op < ceil_IMUL_RCP) {
+            const uint32_t divisor = ins.getImm32();
+            if (!isZeroOrPowerOf2(divisor)) {
+                local_get(code, 5 + dst);
+                i64_const(code, static_cast<int64_t>(randomx_reciprocal(divisor)));
+                code.push_back(0x7e);
+                local_set(code, 5 + dst);
+            }
+        }
+        else if (op < ceil_INEG_R) {
+            local_get(code, 5 + dst);
+            i64_const(code, 0);
+            code.push_back(0x7d);
+            local_set(code, 5 + dst);
+        }
+        else if (op < ceil_IXOR_R) {
+            local_get(code, 5 + dst);
+            if (src == dst) i64_const(code, simm);
+            else local_get(code, 5 + src);
+            code.push_back(0x83);
+            local_set(code, 5 + dst);
+        }
+        else if (op < ceil_IXOR_M) {
+            local_get(code, 5 + dst);
+            const bool zero = src == dst;
+            const uint32_t mask = zero ? ScratchpadL3Mask :
+                                  (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
+            emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
+            code.push_back(0x83);
+            local_set(code, 5 + dst);
+        }
+        else if (op < ceil_IROR_R) {
+            local_get(code, 5 + dst);
+            if (src == dst) i64_const(code, static_cast<int64_t>(ins.getImm32()));
+            else local_get(code, 5 + src);
+            code.push_back(0x88); // i64.rotr
+            local_set(code, 5 + dst);
         }
         else if (op < ceil_IROL_R) {
-            local_get(code, 2 + dst);
+            local_get(code, 5 + dst);
             if (src == dst) i64_const(code, static_cast<int64_t>(ins.getImm32()));
-            else local_get(code, 2 + src);
-            code.push_back(0x8a);
-            local_set(code, 2 + dst);
+            else local_get(code, 5 + src);
+            code.push_back(0x89); // i64.rotl
+            local_set(code, 5 + dst);
         }
         else if (op < ceil_ISWAP_R) {
             if (src != dst) {
-                local_get(code, 2 + dst);
-                local_get(code, 2 + src);
-                local_set(code, 2 + dst);
-                local_set(code, 2 + src);
+                local_get(code, 5 + dst);
+                local_get(code, 5 + src);
+                local_set(code, 5 + dst);
+                local_set(code, 5 + src);
             }
         }
         else if (op < ceil_FSWAP_R) {
+            const int target = (ins.dst % RegistersCount) < RegisterCountFlt
+                                   ? 13 + fdst : 17 + (fdst);
+            local_get(code, target);
+            v128_op(code, 0x0d); // i8x16.shuffle
+            // unreachable without second operand; use lane-wise extract/replace below
+            // Rebuild from the current vector by swapping the two 64-bit lanes.
+            // Stack currently contains one v128; duplicate it and shuffle.
+            // The single-value form is not legal, so discard and emit a fresh pair.
+            code.pop_back();
+            // restore: local_get was already emitted; duplicate with local_get again.
+            code.pop_back();
+            local_get(code, target);
+            local_get(code, target);
+            v128_op(code, 0x0d);
+            const uint8_t shuffle[16] = {8,9,10,11,12,13,14,15,0,1,2,3,4,5,6,7};
+            code.insert(code.end(), shuffle, shuffle + 16);
+            local_set(code, target);
+        }
+        else if (op < ceil_FADD_R) {
+            local_get(code, 13 + fdst);
+            local_get(code, 21 + fsrc);
+            v128_op(code, 0xf0); // f64x2.add
+            local_set(code, 13 + fdst);
+        }
+        else if (op < ceil_FSUB_R) {
+            // FADD_M is intentionally left out until the exact integer-to-f64
+            // conversion sequence is lowered in the memory-FP stage.
             return false;
+        }
+        else if (op < ceil_FSUB_M) {
+            local_get(code, 13 + fdst);
+            local_get(code, 21 + fsrc);
+            v128_op(code, 0xf1); // f64x2.sub
+            local_set(code, 13 + fdst);
+        }
+        else if (op < ceil_FSCAL_R) {
+            return false;
+        }
+        else if (op < ceil_FMUL_R) {
+            local_get(code, 13 + fdst);
+            v128_op(code, 0x0c);
+            const uint64_t mask = 0x80F0000000000000ULL;
+            for (int lane = 0; lane < 2; ++lane) {
+                for (int b = 0; b < 8; ++b)
+                    code.push_back(static_cast<uint8_t>(mask >> (8 * b)));
+            }
+            v128_op(code, 0x51); // v128.xor
+            local_set(code, 13 + fdst);
+        }
+        else if (op < ceil_FDIV_M) {
+            local_get(code, 17 + fdst);
+            local_get(code, 21 + fsrc);
+            v128_op(code, 0xf2); // f64x2.mul
+            local_set(code, 17 + fdst);
+        }
+        else if (op < ceil_FSQRT_R) {
+            return false;
+        }
+        else if (op < ceil_CBRANCH) {
+            local_get(code, 17 + fdst);
+            v128_op(code, 0xef); // f64x2.sqrt
+            local_set(code, 17 + fdst);
         }
         else if (op < ceil_ISTORE) {
             return false;
@@ -258,35 +417,60 @@ bool WasmJit::compile(const Program& program) {
                                       ? ScratchpadL3Mask
                                       : (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
             emit_address(code, static_cast<uint32_t>(dst), simm, mask, false);
-            local_get(code, 2 + src);
+            local_get(code, 5 + src);
             i64_store(code);
         }
     }
 
     for (int r = 0; r < RegistersCount; ++r) {
-        local_get(code, static_cast<uint32_t>(2 + r));
+        local_get(code, static_cast<uint32_t>(5 + r));
         store_reg(code, static_cast<uint32_t>(r));
+    }
+    for (int r = 0; r < RegisterCountFlt; ++r) {
+        local_get(code, static_cast<uint32_t>(13 + r));
+        store_fp(code, 1, static_cast<uint32_t>(r));
+        local_get(code, static_cast<uint32_t>(17 + r));
+        store_fp(code, 2, static_cast<uint32_t>(r));
+        local_get(code, static_cast<uint32_t>(21 + r));
+        store_fp(code, 3, static_cast<uint32_t>(r));
     }
     code.push_back(0x0b);
 
     module_.insert(module_.end(), {0x00, 0x61, 0x73, 0x6d,
                                    0x01, 0x00, 0x00, 0x00});
 
+    // type 0: rx_jit(i32,i32,i32,i32,i32)->void
+    // type 1: mulh_u64(i64,i64)->i64
+    // type 2: mulh_s64(i64,i64)->i64
     std::vector<uint8_t> type;
-    uleb(type, 1);
+    uleb(type, 3);
     type.push_back(0x60);
-    uleb(type, 2);
-    type.push_back(0x7f);
-    type.push_back(0x7f);
+    uleb(type, 5);
+    for (int i = 0; i < 5; ++i) type.push_back(0x7f);
     uleb(type, 0);
+    for (int t = 0; t < 2; ++t) {
+        type.push_back(0x60);
+        uleb(type, 2);
+        type.push_back(0x7e);
+        type.push_back(0x7e);
+        uleb(type, 1);
+        type.push_back(0x7e);
+    }
     section(module_, 1, type);
 
     std::vector<uint8_t> imports;
+    uleb(imports, 3);
+    bytes(imports, "env", 3);
+    bytes(imports, "mulh_u64", 8);
+    imports.push_back(0x00);
     uleb(imports, 1);
+    bytes(imports, "env", 3);
+    bytes(imports, "mulh_s64", 8);
+    imports.push_back(0x00);
+    uleb(imports, 2);
     bytes(imports, "env", 3);
     bytes(imports, "memory", 6);
     imports.push_back(0x02);
-    // Shared Emscripten pthread memory: min=1 page, max=32768 pages (2 GiB).
     imports.push_back(0x03);
     uleb(imports, 1);
     uleb(imports, 32768);
@@ -301,13 +485,15 @@ bool WasmJit::compile(const Program& program) {
     uleb(exports, 1);
     bytes(exports, "rx_jit", 6);
     exports.push_back(0x00);
-    exports.push_back(0x00);
+    uleb(exports, 2); // two imported functions precede the local function
     section(module_, 7, exports);
 
     std::vector<uint8_t> body;
-    uleb(body, 1);
+    uleb(body, 3);
     uleb(body, 8);
-    body.push_back(0x7e);
+    body.push_back(0x7e); // 8 x i64 locals
+    uleb(body, 12);
+    body.push_back(0x7b); // 12 x v128 locals
     body.insert(body.end(), code.begin(), code.end());
 
     std::vector<uint8_t> codes;
