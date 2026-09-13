@@ -28,14 +28,18 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "randomx.h"
 #include "dataset.hpp"
-#include "vm_interpreted.hpp"
-#include "vm_interpreted_light.hpp"
-#include "vm_compiled.hpp"
-#include "vm_compiled_light.hpp"
 #include "blake2/blake2.h"
 #include "cpu.hpp"
 #include <cassert>
 #include <limits>
+
+#include "vm_interpreted.hpp"
+#include "vm_interpreted_light.hpp"
+
+#ifndef __EMSCRIPTEN__
+#include "vm_compiled.hpp"
+#include "vm_compiled_light.hpp"
+#endif
 
 #if defined(__SSE__) || defined(__SSE2__) || (defined(_M_IX86_FP) && (_M_IX86_FP > 0))
 #define USE_CSR_INTRINSICS
@@ -47,25 +51,41 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 extern "C" {
 
 	randomx_flags randomx_get_flags() {
-		randomx_flags flags = RANDOMX_HAVE_COMPILER ? RANDOMX_FLAG_JIT : RANDOMX_FLAG_DEFAULT;
-		randomx::Cpu cpu;
-#ifdef RANDOMX_FORCE_SECURE
-		if (flags == RANDOMX_FLAG_JIT) {
-			flags |= RANDOMX_FLAG_SECURE;
-		}
-#endif
-		if (HAVE_AES && cpu.hasAes()) {
-			flags |= RANDOMX_FLAG_HARD_AES;
-		}
-		if (randomx_argon2_impl_avx2() != nullptr && cpu.hasAvx2()) {
-			flags |= RANDOMX_FLAG_ARGON2_AVX2;
-		}
-		if (randomx_argon2_impl_ssse3() != nullptr && cpu.hasSsse3()) {
-			flags |= RANDOMX_FLAG_ARGON2_SSSE3;
-		}
-		return flags;
-	}
+#ifdef __EMSCRIPTEN__
+		// WebAssembly:
+		// - no native JIT
+	    // - no x86 AVX2/SSSE3
+	    // - no native AES
+	    // - use portable Argon2 implementation
+	    return RANDOMX_FLAG_DEFAULT;
 
+#else
+
+	    randomx_flags flags = RANDOMX_HAVE_COMPILER ? RANDOMX_FLAG_JIT : RANDOMX_FLAG_DEFAULT;
+	    randomx::Cpu cpu;
+
+#ifdef RANDOMX_FORCE_SECURE
+	    if (flags == RANDOMX_FLAG_JIT) {
+		    flags |= RANDOMX_FLAG_SECURE;
+	    }
+#endif
+
+	    if (HAVE_AES && cpu.hasAes()) {
+		    flags |= RANDOMX_FLAG_HARD_AES;
+	    }
+
+	    if (randomx_argon2_impl_avx2() != nullptr && cpu.hasAvx2()) {
+		    flags |= RANDOMX_FLAG_ARGON2_AVX2;
+	    }
+
+	    if (randomx_argon2_impl_ssse3() != nullptr && cpu.hasSsse3()) {
+		    flags |= RANDOMX_FLAG_ARGON2_SSSE3;
+	    }
+
+	    return flags;
+
+#endif
+    }
 	randomx_cache *randomx_alloc_cache(randomx_flags flags) {
 		randomx_cache *cache = nullptr;
 		auto impl = randomx::selectArgonImpl(flags);
@@ -208,140 +228,168 @@ extern "C" {
 		delete dataset;
 	}
 
-	randomx_vm *randomx_create_vm(randomx_flags flags, randomx_cache *cache, randomx_dataset *dataset) {
-		assert(cache != nullptr || (flags & RANDOMX_FLAG_FULL_MEM));
-		assert(cache == nullptr || cache->isInitialized());
-		assert(dataset != nullptr || !(flags & RANDOMX_FLAG_FULL_MEM));
+    randomx_vm *randomx_create_vm(randomx_flags flags, randomx_cache *cache, randomx_dataset *dataset) {
+	    assert(cache != nullptr || (flags & RANDOMX_FLAG_FULL_MEM));
+	    assert(cache == nullptr || cache->isInitialized());
+	    assert(dataset != nullptr || !(flags & RANDOMX_FLAG_FULL_MEM));
 
-		randomx_vm *vm = nullptr;
+	    randomx_vm *vm = nullptr;
 
-		try {
-			switch ((int)(flags & (RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES))) {
-				case RANDOMX_FLAG_DEFAULT:
-					vm = new randomx::InterpretedLightVmDefault();
-					break;
+	    try {
 
-				case RANDOMX_FLAG_FULL_MEM:
-					vm = new randomx::InterpretedVmDefault();
-					break;
+#ifdef __EMSCRIPTEN__
 
-				case RANDOMX_FLAG_JIT:
-					if (flags & RANDOMX_FLAG_SECURE) {
-						vm = new randomx::CompiledLightVmDefaultSecure();
+		    /*
+		     * WebAssembly backend
+		     *
+		     * RandomX native JIT is intentionally disabled here.
+		     * Emscripten/WASM uses the portable interpreted VM.
+		     *
+		     * Unsupported native flags are removed so that the VM
+		     * selection can never reach CompiledVm or x86-specific
+		     * implementations.
+		     */
+
+		    const bool fullMemory = (flags & RANDOMX_FLAG_FULL_MEM) != 0;
+
+		    flags &= RANDOMX_FLAG_FULL_MEM;
+
+		    if (fullMemory) {
+			    vm = new randomx::InterpretedVmDefault();
+		    }
+		    else {
+			    vm = new randomx::InterpretedLightVmDefault();
+		    }
+
+#else
+
+		    switch ((int)(flags & (RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES))) {
+			    case RANDOMX_FLAG_DEFAULT:
+				    vm = new randomx::InterpretedLightVmDefault();
+				    break;
+
+			    case RANDOMX_FLAG_FULL_MEM:
+				    vm = new randomx::InterpretedVmDefault();
+				    break;
+
+			    case RANDOMX_FLAG_JIT:
+				    if (flags & RANDOMX_FLAG_SECURE) {
+					    vm = new randomx::CompiledLightVmDefaultSecure();
+				    }
+				    else {
+					    vm = new randomx::CompiledLightVmDefault();
+				    }
+				    break;
+
+			    case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT:
+				    if (flags & RANDOMX_FLAG_SECURE) {
+					    vm = new randomx::CompiledVmDefaultSecure();
+				    }
+				    else {
+					    vm = new randomx::CompiledVmDefault();
+				    }
+				    break;
+
+			    case RANDOMX_FLAG_HARD_AES:
+				    vm = new randomx::InterpretedLightVmHardAes();
+				    break;
+
+			    case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_HARD_AES:
+				    vm = new randomx::InterpretedVmHardAes();
+				    break;
+
+			    case RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES:
+				    if (flags & RANDOMX_FLAG_SECURE) {
+					     vm = new randomx::CompiledLightVmHardAesSecure();
+				    }
+				    else {
+					    vm = new randomx::CompiledLightVmHardAes();
+				    }
+				    break;
+
+			    case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES:
+				    if (flags & RANDOMX_FLAG_SECURE) {
+					    vm = new randomx::CompiledVmHardAesSecure();
+				    }
+				    else {
+					    vm = new randomx::CompiledVmHardAes();
+				    }
+				    break;
+
+			    case RANDOMX_FLAG_LARGE_PAGES:
+				    vm = new randomx::InterpretedLightVmLargePage();
+				    break;
+
+			    case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_LARGE_PAGES:
+				    vm = new randomx::InterpretedVmLargePage();
+				    break;
+
+			    case RANDOMX_FLAG_JIT | RANDOMX_FLAG_LARGE_PAGES:
+				    if (flags & RANDOMX_FLAG_SECURE) {
+					    vm = new randomx::CompiledLightVmLargePageSecure();
+				    }
+				    else {
+					    vm = new randomx::CompiledLightVmLargePage();
+				    }
+				    break;
+
+			    case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_LARGE_PAGES:
+				    if (flags & RANDOMX_FLAG_SECURE) {
+					    vm = new randomx::CompiledVmLargePageSecure();
+				    }
+				    else {
+					    vm = new randomx::CompiledVmLargePage();
 					}
-					else {
-						vm = new randomx::CompiledLightVmDefault();
-					}
-					break;
+				    break;
 
-				case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT:
-					if (flags & RANDOMX_FLAG_SECURE) {
-						vm = new randomx::CompiledVmDefaultSecure();
-					}
-					else {
-						vm = new randomx::CompiledVmDefault();
-					}
-					break;
+			    case RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES:
+				    vm = new randomx::InterpretedLightVmLargePageHardAes();
+				    break;
 
-				case RANDOMX_FLAG_HARD_AES:
-					vm = new randomx::InterpretedLightVmHardAes();
-					break;
+			    case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES:
+				    vm = new randomx::InterpretedVmLargePageHardAes();
+				    break;
 
-				case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_HARD_AES:
-					vm = new randomx::InterpretedVmHardAes();
-					break;
+			    case RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES:
+				    if (flags & RANDOMX_FLAG_SECURE) {
+					    vm = new randomx::CompiledLightVmLargePageHardAesSecure();
+				    }
+				    else {
+					    vm = new randomx::CompiledLightVmLargePageHardAes();
+				    }
+				    break;
 
-				case RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES:
-					if (flags & RANDOMX_FLAG_SECURE) {
-						vm = new randomx::CompiledLightVmHardAesSecure();
-					}
-					else {
-						vm = new randomx::CompiledLightVmHardAes();
-					}
-					break;
+			        case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES:
+				        if (flags & RANDOMX_FLAG_SECURE) {
+					        vm = new randomx::CompiledVmLargePageHardAesSecure();
+				        }
+				        else {
+					        vm = new randomx::CompiledVmLargePageHardAes();
+				        }
+                        break;
 
-				case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES:
-					if (flags & RANDOMX_FLAG_SECURE) {
-						vm = new randomx::CompiledVmHardAesSecure();
-					}
-					else {
-						vm = new randomx::CompiledVmHardAes();
-					}
-					break;
-
-				case RANDOMX_FLAG_LARGE_PAGES:
-					vm = new randomx::InterpretedLightVmLargePage();
-					break;
-
-				case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_LARGE_PAGES:
-					vm = new randomx::InterpretedVmLargePage();
-					break;
-
-				case RANDOMX_FLAG_JIT | RANDOMX_FLAG_LARGE_PAGES:
-					if (flags & RANDOMX_FLAG_SECURE) {
-						vm = new randomx::CompiledLightVmLargePageSecure();
-					}
-					else {
-						vm = new randomx::CompiledLightVmLargePage();
-					}
-					break;
-
-				case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_LARGE_PAGES:
-					if (flags & RANDOMX_FLAG_SECURE) {
-						vm = new randomx::CompiledVmLargePageSecure();
-					}
-					else {
-						vm = new randomx::CompiledVmLargePage();
-					}
-					break;
-
-				case RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES:
-					vm = new randomx::InterpretedLightVmLargePageHardAes();
-					break;
-
-				case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES:
-					vm = new randomx::InterpretedVmLargePageHardAes();
-					break;
-
-				case RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES:
-					if (flags & RANDOMX_FLAG_SECURE) {
-						vm = new randomx::CompiledLightVmLargePageHardAesSecure();
-					}
-					else {
-						vm = new randomx::CompiledLightVmLargePageHardAes();
-					}
-					break;
-
-				case RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_LARGE_PAGES:
-					if (flags & RANDOMX_FLAG_SECURE) {
-						vm = new randomx::CompiledVmLargePageHardAesSecure();
-					}
-					else {
-						vm = new randomx::CompiledVmLargePageHardAes();
-					}
-					break;
-
-				default:
-					UNREACHABLE;
+			        default:
+				        UNREACHABLE;
 			}
+#endif
+		    if (cache != nullptr) {
+			    vm->setCache(cache);
+			    vm->cacheKey = cache->cacheKey;
+		    }
 
-			if(cache != nullptr) {
-				vm->setCache(cache);
-				vm->cacheKey = cache->cacheKey;
-			}
+		    if (dataset != nullptr) {
+			    vm->setDataset(dataset);
+		    }
 
-			if(dataset != nullptr)
-				vm->setDataset(dataset);
-
-			vm->allocate();
+		    vm->allocate();
 		}
-		catch (std::exception &ex) {
-			delete vm;
-			vm = nullptr;
-		}
+	    catch (std::exception &ex) {
+		    delete vm;
+		    vm = nullptr;
+	    }
 
-		return vm;
-	}
+	    return vm;
+    }
 
 	void randomx_vm_set_cache(randomx_vm *machine, randomx_cache* cache) {
 		assert(machine != nullptr);
