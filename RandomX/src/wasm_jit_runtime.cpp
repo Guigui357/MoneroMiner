@@ -119,6 +119,7 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
                 return roundDirected(aBits, bBits, f64ToBits(r), mode | 0, op);
             };
             const fpSqrt = (aBits, mode) => f64ToBits(Math.sqrt(bitsToF64(aBits)));
+            const fpFromI32 = (value) => f64ToBits(Number(value | 0));
 
             const instance = new WebAssembly.Instance(wasmModule, {
                 env: {
@@ -130,7 +131,8 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
                     fp_sub: (a, b, mode) => fpBin(a, b, mode, 1),
                     fp_mul: (a, b, mode) => fpBin(a, b, mode, 2),
                     fp_div: (a, b, mode) => fpBin(a, b, mode, 3),
-                    fp_sqrt: (a, mode) => fpSqrt(a, mode)
+                    fp_sqrt: (a, mode) => fpSqrt(a, mode),
+                    fp_from_i32: fpFromI32
                 }
             });
 
