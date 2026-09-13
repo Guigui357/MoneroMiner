@@ -40,112 +40,41 @@ set(randomx_sources
 # WebAssembly / Emscripten
 # ============================================================
 
-if(EMSCRIPTEN)
-
-    message(STATUS "==========================================")
-    message(STATUS " RandomX WebAssembly build")
-    message(STATUS "==========================================")
-
-    set(RANDOMX_WASM ON)
-
-    option(
-        RANDOMX_WASM_SIMD
-        "Enable WebAssembly SIMD128"
-        ON
-    )
-
-    option(
-        RANDOMX_WASM_PTHREADS
-        "Enable WebAssembly pthreads"
-        ON
-    )
-
-    # --------------------------------------------------------
-    # IMPORTANT:
-    # Do NOT compile native JIT backends.
-    # --------------------------------------------------------
-
-    message(STATUS "Native RandomX JIT: DISABLED")
-    message(STATUS "Backend: interpreted VM")
-
-    target_compile_options(randomx INTERFACE
-        -O3
-    )
-
-    # --------------------------------------------------------
-    # SIMD128
-    # --------------------------------------------------------
-
-    if(RANDOMX_WASM_SIMD)
-
-        message(STATUS "WebAssembly SIMD128: ENABLED")
-
-        add_compile_options(
-            -msimd128
-        )
-
-    endif()
-
-    # --------------------------------------------------------
-    # pthreads
-    # --------------------------------------------------------
-
-    if(RANDOMX_WASM_PTHREADS)
-
-        message(STATUS "WebAssembly pthreads: ENABLED")
-
-        add_compile_options(
-            -pthread
-        )
-
-    endif()
-
-else()
-
-    # ========================================================
-    # Native RandomX
-    # ========================================================
-
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-
-        if(
-            CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"
-            OR CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64"
-            OR CMAKE_SYSTEM_PROCESSOR STREQUAL "amd64"
-        )
-
-            list(APPEND randomx_sources
-                src/assembly_generator_x86.cpp
-                src/jit_compiler_x86.cpp
-                src/jit_compiler_x86_static.S
-            )
-
-        endif()
-
-    endif()
-
-endif()
-
-# ============================================================
-# Library
-# ============================================================
-
-add_library(
-    randomx
-    STATIC
+add_library(randomx STATIC
     ${randomx_sources}
 )
 
-target_include_directories(
-    randomx
+target_include_directories(randomx
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-set_property(
-    TARGET randomx
-    PROPERTY POSITION_INDEPENDENT_CODE ON
-)
+if(EMSCRIPTEN)
+    message(STATUS "=========================================")
+    message(STATUS "  RandomX WebAssembly build")
+    message(STATUS "=========================================")
+    message(STATUS "Native RandomX JIT: DISABLED")
+    message(STATUS "Backend: interpreted VM")
+
+    if(RANDOMX_WASM_SIMD)
+        target_compile_options(randomx PRIVATE -msimd128)
+        message(STATUS "WebAssembly SIMD128: ENABLED")
+    else()
+        message(STATUS "WebAssembly SIMD128: DISABLED")
+    endif()
+
+    if(RANDOMX_WASM_PTHREADS)
+        target_compile_options(randomx PRIVATE -pthread)
+        target_link_options(randomx INTERFACE -pthread)
+        message(STATUS "WebAssembly pthreads: ENABLED")
+    else()
+        message(STATUS "WebAssembly pthreads: DISABLED")
+    endif()
+
+    target_compile_definitions(randomx PRIVATE
+        RANDOMX_WASM=1
+    )
+endif()
 
 # ============================================================
 # Native optimizations
