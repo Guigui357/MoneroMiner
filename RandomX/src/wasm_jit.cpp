@@ -76,7 +76,7 @@ static void i64_store(std::vector<uint8_t>& c) {
 static void v128_load(std::vector<uint8_t>& c) {
     c.push_back(0xfd);
     uleb(c, 0x00);
-    uleb(c, 4); // 16-byte natural alignment
+    uleb(c, 4);
     uleb(c, 0);
 }
 
@@ -124,18 +124,18 @@ static void store_fp(std::vector<uint8_t>& c, uint32_t ptr_local,
 
 static void emit_address(std::vector<uint8_t>& c, uint32_t src,
                          int64_t imm, uint32_t mask, bool zero_register) {
-    local_get(c, 4); // scratchpad pointer
+    local_get(c, 4);
     if (zero_register) {
         i64_const(c, imm);
     } else {
         local_get(c, 5 + src);
         i64_const(c, imm);
-        c.push_back(0x7c);
+        c.push_back(0x7c); // i64.add
     }
     i64_const(c, static_cast<int64_t>(mask));
-    c.push_back(0x83);
-    c.push_back(0xa7);
-    c.push_back(0x6a);
+    c.push_back(0x83); // i64.and
+    c.push_back(0xa7); // i32.wrap_i64
+    c.push_back(0x6a); // i32.add
 }
 
 static void emit_load(std::vector<uint8_t>& c, uint32_t src,
@@ -156,16 +156,16 @@ static bool supported(const Instruction& ins) {
     const int op = ins.opcode;
     if (op < ceil_FSWAP_R) return true;
     if (op < ceil_FADD_R) return true;
-    if (op < ceil_FADD_M) return false; // FADD_R
-    if (op < ceil_FSUB_R) return false; // FADD_M not yet lowered
-    if (op < ceil_FSUB_M) return true;  // FSUB_R
-    if (op < ceil_FSCAL_R) return false; // FSUB_M
-    if (op < ceil_FMUL_R) return true;  // FSCAL_R
-    if (op < ceil_FDIV_M) return true;  // FMUL_R
-    if (op < ceil_FSQRT_R) return false; // FDIV_M
-    if (op < ceil_CBRANCH) return true;  // FSQRT_R
-    if (op < ceil_ISTORE) return false;  // CBRANCH/CFROUND
-    if (op < ceil_NOP) return true;      // ISTORE
+    if (op < ceil_FADD_M) return false;
+    if (op < ceil_FSUB_R) return true;
+    if (op < ceil_FSUB_M) return false;
+    if (op < ceil_FSCAL_R) return true;
+    if (op < ceil_FMUL_R) return false;
+    if (op < ceil_FDIV_M) return true;
+    if (op < ceil_FSQRT_R) return false;
+    if (op < ceil_CBRANCH) return true;
+    if (op < ceil_ISTORE) return false;
+    if (op < ceil_NOP) return true;
     return true;
 }
 
@@ -185,8 +185,6 @@ bool WasmJit::compile(const Program& program) {
 
     std::vector<uint8_t> code;
 
-    // Params: 0=regs, 1=f, 2=e, 3=a, 4=scratchpad.
-    // Locals: 5..12 = integer registers, 13..24 = f/e/a v128 registers.
     for (int r = 0; r < RegistersCount; ++r) {
         load_reg(code, static_cast<uint32_t>(r));
         local_set(code, static_cast<uint32_t>(5 + r));
@@ -213,10 +211,10 @@ bool WasmJit::compile(const Program& program) {
             local_get(code, 5 + dst);
             local_get(code, 5 + src);
             i64_const(code, static_cast<int64_t>(ins.getModShift()));
-            code.push_back(0x86); // i64.shl
+            code.push_back(0x86);
             if (dst == RegisterNeedsDisplacement) {
                 i64_const(code, simm);
-                code.push_back(0x7c); // i64.add
+                code.push_back(0x7c);
             }
             code.push_back(0x7c);
             local_set(code, 5 + dst);
@@ -265,7 +263,7 @@ bool WasmJit::compile(const Program& program) {
         else if (op < ceil_IMULH_R) {
             local_get(code, 5 + dst);
             local_get(code, 5 + src);
-            emit_i64_mulh_import(code, 0); // unsigned high 64 bits
+            emit_i64_mulh_import(code, 0);
             local_set(code, 5 + dst);
         }
         else if (op < ceil_IMULH_M) {
@@ -280,7 +278,7 @@ bool WasmJit::compile(const Program& program) {
         else if (op < ceil_ISMULH_R) {
             local_get(code, 5 + dst);
             local_get(code, 5 + src);
-            emit_i64_mulh_import(code, 1); // signed high 64 bits
+            emit_i64_mulh_import(code, 1);
             local_set(code, 5 + dst);
         }
         else if (op < ceil_ISMULH_M) {
@@ -311,7 +309,7 @@ bool WasmJit::compile(const Program& program) {
             local_get(code, 5 + dst);
             if (src == dst) i64_const(code, simm);
             else local_get(code, 5 + src);
-            code.push_back(0x83);
+            code.push_back(0x85);
             local_set(code, 5 + dst);
         }
         else if (op < ceil_IXOR_M) {
@@ -320,21 +318,21 @@ bool WasmJit::compile(const Program& program) {
             const uint32_t mask = zero ? ScratchpadL3Mask :
                                   (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
             emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
-            code.push_back(0x83);
+            code.push_back(0x85);
             local_set(code, 5 + dst);
         }
         else if (op < ceil_IROR_R) {
             local_get(code, 5 + dst);
             if (src == dst) i64_const(code, static_cast<int64_t>(ins.getImm32()));
             else local_get(code, 5 + src);
-            code.push_back(0x88); // i64.rotr
+            code.push_back(0x88);
             local_set(code, 5 + dst);
         }
         else if (op < ceil_IROL_R) {
             local_get(code, 5 + dst);
             if (src == dst) i64_const(code, static_cast<int64_t>(ins.getImm32()));
             else local_get(code, 5 + src);
-            code.push_back(0x89); // i64.rotl
+            code.push_back(0x89);
             local_set(code, 5 + dst);
         }
         else if (op < ceil_ISWAP_R) {
@@ -347,16 +345,7 @@ bool WasmJit::compile(const Program& program) {
         }
         else if (op < ceil_FSWAP_R) {
             const int target = (ins.dst % RegistersCount) < RegisterCountFlt
-                                   ? 13 + fdst : 17 + (fdst);
-            local_get(code, target);
-            v128_op(code, 0x0d); // i8x16.shuffle
-            // unreachable without second operand; use lane-wise extract/replace below
-            // Rebuild from the current vector by swapping the two 64-bit lanes.
-            // Stack currently contains one v128; duplicate it and shuffle.
-            // The single-value form is not legal, so discard and emit a fresh pair.
-            code.pop_back();
-            // restore: local_get was already emitted; duplicate with local_get again.
-            code.pop_back();
+                                   ? 13 + fdst : 17 + fdst;
             local_get(code, target);
             local_get(code, target);
             v128_op(code, 0x0d);
@@ -367,18 +356,16 @@ bool WasmJit::compile(const Program& program) {
         else if (op < ceil_FADD_R) {
             local_get(code, 13 + fdst);
             local_get(code, 21 + fsrc);
-            v128_op(code, 0xf0); // f64x2.add
+            v128_op(code, 0xf0);
             local_set(code, 13 + fdst);
         }
         else if (op < ceil_FSUB_R) {
-            // FADD_M is intentionally left out until the exact integer-to-f64
-            // conversion sequence is lowered in the memory-FP stage.
             return false;
         }
         else if (op < ceil_FSUB_M) {
             local_get(code, 13 + fdst);
             local_get(code, 21 + fsrc);
-            v128_op(code, 0xf1); // f64x2.sub
+            v128_op(code, 0xf1);
             local_set(code, 13 + fdst);
         }
         else if (op < ceil_FSCAL_R) {
@@ -392,13 +379,13 @@ bool WasmJit::compile(const Program& program) {
                 for (int b = 0; b < 8; ++b)
                     code.push_back(static_cast<uint8_t>(mask >> (8 * b)));
             }
-            v128_op(code, 0x51); // v128.xor
+            v128_op(code, 0x51);
             local_set(code, 13 + fdst);
         }
         else if (op < ceil_FDIV_M) {
             local_get(code, 17 + fdst);
             local_get(code, 21 + fsrc);
-            v128_op(code, 0xf2); // f64x2.mul
+            v128_op(code, 0xf2);
             local_set(code, 17 + fdst);
         }
         else if (op < ceil_FSQRT_R) {
@@ -406,7 +393,7 @@ bool WasmJit::compile(const Program& program) {
         }
         else if (op < ceil_CBRANCH) {
             local_get(code, 17 + fdst);
-            v128_op(code, 0xef); // f64x2.sqrt
+            v128_op(code, 0xef);
             local_set(code, 17 + fdst);
         }
         else if (op < ceil_ISTORE) {
@@ -439,9 +426,6 @@ bool WasmJit::compile(const Program& program) {
     module_.insert(module_.end(), {0x00, 0x61, 0x73, 0x6d,
                                    0x01, 0x00, 0x00, 0x00});
 
-    // type 0: rx_jit(i32,i32,i32,i32,i32)->void
-    // type 1: mulh_u64(i64,i64)->i64
-    // type 2: mulh_s64(i64,i64)->i64
     std::vector<uint8_t> type;
     uleb(type, 3);
     type.push_back(0x60);
@@ -471,9 +455,8 @@ bool WasmJit::compile(const Program& program) {
     bytes(imports, "env", 3);
     bytes(imports, "memory", 6);
     imports.push_back(0x02);
-    imports.push_back(0x03);
+    imports.push_back(0x00); // imported memory: minimum only
     uleb(imports, 1);
-    uleb(imports, 32768);
     section(module_, 2, imports);
 
     std::vector<uint8_t> funcs;
@@ -485,15 +468,15 @@ bool WasmJit::compile(const Program& program) {
     uleb(exports, 1);
     bytes(exports, "rx_jit", 6);
     exports.push_back(0x00);
-    uleb(exports, 2); // two imported functions precede the local function
+    uleb(exports, 2);
     section(module_, 7, exports);
 
     std::vector<uint8_t> body;
     uleb(body, 3);
     uleb(body, 8);
-    body.push_back(0x7e); // 8 x i64 locals
+    body.push_back(0x7e);
     uleb(body, 12);
-    body.push_back(0x7b); // 12 x v128 locals
+    body.push_back(0x7b);
     body.insert(body.end(), code.begin(), code.end());
 
     std::vector<uint8_t> codes;
