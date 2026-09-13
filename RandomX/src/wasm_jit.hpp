@@ -10,24 +10,22 @@
 
 namespace randomx {
 
-// Stage 3 WASM JIT runtime bridge.
-// The emitter builds executable WASM for the validated integer subset and
-// this class can now execute that module against Emscripten linear memory.
+// Stage 6 WASM JIT runtime bridge.
+// The generated module operates directly on the RandomX register file:
+//   rx_jit(i32 regs, i32 f, i32 e, i32 a, i32 scratchpad)
+// Integer registers are 8 x uint64. Each FP register is 16 bytes
+// (two packed f64 lanes).
 class WasmJit {
 public:
     WasmJit() = default;
 
-    // Builds a standalone module importing the host linear memory as
-    // env.memory and exporting:
-    //   rx_jit(i32 regs_ptr, i32 scratchpad_ptr)
-    //
-    // regs_ptr points to 8 uint64 integer registers.
-    // scratchpad_ptr points to the RandomX scratchpad in the same linear memory.
     bool compile(const Program& program);
 
-    // Instantiates/caches the generated module and executes rx_jit.
-    // Both pointers must refer to Emscripten linear memory.
-    bool execute(uint8_t* regs, uint8_t* scratchpad);
+    bool execute(uint8_t* regs,
+                 uint8_t* f,
+                 uint8_t* e,
+                 uint8_t* a,
+                 uint8_t* scratchpad);
 
     const std::vector<uint8_t>& module() const { return module_; }
 
