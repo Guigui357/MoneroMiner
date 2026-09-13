@@ -12,6 +12,9 @@ namespace {
 EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
                                          int module_size,
                                          int regs_ptr,
+                                         int f_ptr,
+                                         int e_ptr,
+                                         int a_ptr,
                                          int scratchpad_ptr), {
     try {
         const bytes = HEAPU8.slice(module_ptr, module_ptr + module_size);
@@ -39,7 +42,7 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
             cache[key] = fn;
         }
 
-        fn(regs_ptr, scratchpad_ptr);
+        fn(regs_ptr, f_ptr, e_ptr, a_ptr, scratchpad_ptr);
         return 1;
     } catch (e) {
         console.error('RandomX WASM JIT runtime error:', e);
@@ -49,8 +52,13 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
 
 } // namespace
 
-bool WasmJit::execute(uint8_t* regs, uint8_t* scratchpad) {
-    if (module_.empty() || regs == nullptr || scratchpad == nullptr) {
+bool WasmJit::execute(uint8_t* regs,
+                      uint8_t* f,
+                      uint8_t* e,
+                      uint8_t* a,
+                      uint8_t* scratchpad) {
+    if (module_.empty() || regs == nullptr || f == nullptr || e == nullptr ||
+        a == nullptr || scratchpad == nullptr) {
         return false;
     }
 
@@ -58,6 +66,9 @@ bool WasmJit::execute(uint8_t* regs, uint8_t* scratchpad) {
         module_.data(),
         static_cast<int>(module_.size()),
         static_cast<int>(reinterpret_cast<uintptr_t>(regs)),
+        static_cast<int>(reinterpret_cast<uintptr_t>(f)),
+        static_cast<int>(reinterpret_cast<uintptr_t>(e)),
+        static_cast<int>(reinterpret_cast<uintptr_t>(a)),
         static_cast<int>(reinterpret_cast<uintptr_t>(scratchpad))) != 0;
 }
 
