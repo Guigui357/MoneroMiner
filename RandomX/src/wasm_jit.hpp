@@ -10,21 +10,20 @@
 
 namespace randomx {
 
-// Stage 2 WASM JIT emitter.
-// Emits executable WASM for the integer RandomX instruction subset and the
-// scratchpad load/store forms. Floating point, high multiply, branches and
-// CFROUND remain interpreter-only until their semantics are validated.
+// Stage 3 WASM JIT runtime.
+// The emitter produces a standalone module and the runtime synchronously
+// compiles/instantiates that module through the browser's WebAssembly API.
 class WasmJit {
 public:
     WasmJit() = default;
 
-    // Builds a standalone module importing the host linear memory as
-    // env.memory and exporting:
+    // Builds a standalone module importing env.memory and exporting:
     //   rx_jit(i32 regs_ptr, i32 scratchpad_ptr)
-    //
-    // regs_ptr points to 8 uint64 integer registers.
-    // scratchpad_ptr points to the RandomX scratchpad in the same linear memory.
     bool compile(const Program& program);
+
+    // Instantiates the generated module and executes rx_jit against the
+    // current Emscripten linear memory.
+    bool execute(uint8_t* regs, uint8_t* scratchpad);
 
     const std::vector<uint8_t>& module() const { return module_; }
 
