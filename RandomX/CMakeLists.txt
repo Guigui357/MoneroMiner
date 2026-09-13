@@ -44,7 +44,7 @@ if(EMSCRIPTEN)
     # Stage 3: the emitter produces executable WASM and the runtime bridge
     # compiles/instantiates it against Emscripten's linear memory.
     list(APPEND randomx_sources
-        src/wasm_jit_v1.cpp
+        src/wasm_jit.cpp
         src/wasm_jit_runtime.cpp
     )
 endif()
