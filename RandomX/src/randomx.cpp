@@ -86,66 +86,125 @@ extern "C" {
 
 #endif
     }
-	randomx_cache *randomx_alloc_cache(randomx_flags flags) {
-		randomx_cache *cache = nullptr;
-		auto impl = randomx::selectArgonImpl(flags);
-		if (impl == nullptr) {
-			return cache;
-		}
 
-		try {
-			cache = new randomx_cache();
-			cache->argonImpl = impl;
-			switch ((int)(flags & (RANDOMX_FLAG_JIT | RANDOMX_FLAG_LARGE_PAGES))) {
-				case RANDOMX_FLAG_DEFAULT:
-					cache->dealloc = &randomx::deallocCache<randomx::DefaultAllocator>;
-					cache->jit = nullptr;
-					cache->initialize = &randomx::initCache;
-					cache->datasetInit = &randomx::initDataset;
-					cache->memory = (uint8_t*)randomx::DefaultAllocator::allocMemory(randomx::CacheSize);
-					break;
+    randomx_cache *randomx_alloc_cache(randomx_flags flags) {
+        randomx_cache *cache = nullptr;
 
-				case RANDOMX_FLAG_JIT:
-					cache->dealloc = &randomx::deallocCache<randomx::DefaultAllocator>;
-					cache->jit = new randomx::JitCompiler();
-					cache->initialize = &randomx::initCacheCompile;
-					cache->datasetInit = cache->jit->getDatasetInitFunc();
-					cache->memory = (uint8_t*)randomx::DefaultAllocator::allocMemory(randomx::CacheSize);
-					break;
+#ifdef __EMSCRIPTEN__
 
-				case RANDOMX_FLAG_LARGE_PAGES:
-					cache->dealloc = &randomx::deallocCache<randomx::LargePageAllocator>;
-					cache->jit = nullptr;
-					cache->initialize = &randomx::initCache;
-					cache->datasetInit = &randomx::initDataset;
-					cache->memory = (uint8_t*)randomx::LargePageAllocator::allocMemory(randomx::CacheSize);
-					break;
+        // WebAssembly usa exclusivamente a implementação portátil.
+        flags = (randomx_flags)(flags &
+            ~(RANDOMX_FLAG_JIT |
+              RANDOMX_FLAG_HARD_AES |
+              RANDOMX_FLAG_ARGON2_AVX2 |
+              RANDOMX_FLAG_ARGON2_SSSE3));
 
-				case RANDOMX_FLAG_JIT | RANDOMX_FLAG_LARGE_PAGES:
-					cache->dealloc = &randomx::deallocCache<randomx::LargePageAllocator>;
-					cache->jit = new randomx::JitCompiler();
-					cache->initialize = &randomx::initCacheCompile;
-					cache->datasetInit = cache->jit->getDatasetInitFunc();
-					cache->memory = (uint8_t*)randomx::LargePageAllocator::allocMemory(randomx::CacheSize);
-					break;
+        auto impl = randomx::selectArgonImpl(flags);
 
-				default:
-					UNREACHABLE;
-			}
-		}
-		catch (std::exception &ex) {
-			if (cache != nullptr) {
-				randomx_release_cache(cache);
-				cache = nullptr;
-			}
-		}
-		if (cache && cache->memory == nullptr) {
-			randomx_release_cache(cache);
-			cache = nullptr;
-		}
+        if (impl == nullptr) {
+            return nullptr;
+        }
 
-		return cache;
-	}
+        try {
+            cache = new randomx_cache();
+
+            cache->argonImpl = impl;
+            cache->dealloc = &randomx::deallocCache<randomx::DefaultAllocator>;
+            cache->jit = nullptr;
+            cache->initialize = &randomx::initCache;
+            cache->datasetInit = &randomx::initDataset;
+            cache->memory = (uint8_t*)randomx::DefaultAllocator::allocMemory(
+                randomx::CacheSize
+            );
+        }
+        catch (std::exception&) {
+            if (cache != nullptr) {
+                randomx_release_cache(cache);
+                cache = nullptr;
+            }
+        }
+
+        if (cache && cache->memory == nullptr) {
+            randomx_release_cache(cache);
+            cache = nullptr;
+        }
+
+        return cache;
+
+#else
+
+        // Código original para builds nativos.
+        auto impl = randomx::selectArgonImpl(flags);
+
+        if (impl == nullptr) {
+            return nullptr;
+        }
+
+        try {
+            cache = new randomx_cache();
+            cache->argonImpl = impl;
+
+            switch ((int)(flags & (RANDOMX_FLAG_JIT | RANDOMX_FLAG_LARGE_PAGES))) {
+                case RANDOMX_FLAG_DEFAULT:
+                    cache->dealloc = &randomx::deallocCache<randomx::DefaultAllocator>;
+                    cache->jit = nullptr;
+                    cache->initialize = &randomx::initCache;
+                    cache->datasetInit = &randomx::initDataset;
+                    cache->memory = (uint8_t*)randomx::DefaultAllocator::allocMemory(
+                        randomx::CacheSize
+                    );
+                    break;
+
+                case RANDOMX_FLAG_JIT:
+                    cache->dealloc = &randomx::deallocCache<randomx::DefaultAllocator>;
+                    cache->jit = new randomx::JitCompiler();
+                    cache->initialize = &randomx::initCacheCompile;
+                    cache->datasetInit = cache->jit->getDatasetInitFunc();
+                    cache->memory = (uint8_t*)randomx::DefaultAllocator::allocMemory(
+                        randomx::CacheSize
+                    );
+                    break;
+
+                case RANDOMX_FLAG_LARGE_PAGES:
+                    cache->dealloc = &randomx::deallocCache<randomx::LargePageAllocator>;
+                    cache->jit = nullptr;
+                    cache->initialize = &randomx::initCache;
+                    cache->datasetInit = &randomx::initDataset;
+                    cache->memory = (uint8_t*)randomx::LargePageAllocator::allocMemory(
+                        randomx::CacheSize
+                    );
+                    break;
+
+                case RANDOMX_FLAG_JIT | RANDOMX_FLAG_LARGE_PAGES:
+                    cache->dealloc = &randomx::deallocCache<randomx::LargePageAllocator>;
+                    cache->jit = new randomx::JitCompiler();
+                    cache->initialize = &randomx::initCacheCompile;
+                    cache->datasetInit = cache->jit->getDatasetInitFunc();
+                    cache->memory = (uint8_t*)randomx::LargePageAllocator::allocMemory(
+                        randomx::CacheSize
+                    );
+                    break;
+
+                default:
+                    UNREACHABLE;
+            }
+        }
+        catch (std::exception&) {
+            if (cache != nullptr) {
+                randomx_release_cache(cache);
+                cache = nullptr;
+            }
+        }
+
+        if (cache && cache->memory == nullptr) {
+            randomx_release_cache(cache);
+            cache = nullptr;
+        }
+
+        return cache;
+
+#endif
+    }
 
 	void randomx_init_cache(randomx_cache *cache, const void *key, size_t keySize) {
 		assert(cache != nullptr);
