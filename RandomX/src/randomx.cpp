@@ -311,7 +311,7 @@ extern "C" {
 
 		    const bool fullMemory = (flags & RANDOMX_FLAG_FULL_MEM) != 0;
 
-		    flags &= RANDOMX_FLAG_FULL_MEM;
+		    flags = (randomx_flags)(flags & RANDOMX_FLAG_FULL_MEM);
 
 		    if (fullMemory) {
 			    vm = new randomx::InterpretedVmDefault();
