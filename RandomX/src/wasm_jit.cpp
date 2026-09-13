@@ -88,11 +88,15 @@ static void store_reg(std::vector<uint8_t>& c, uint32_t r) {
 }
 
 static void emit_address(std::vector<uint8_t>& c, uint32_t src,
-                         int64_t imm, uint32_t mask) {
+                         int64_t imm, uint32_t mask, bool zero_register) {
     local_get(c, 1);
-    local_get(c, 2 + src);
-    i64_const(c, imm);
-    c.push_back(0x7c);
+    if (zero_register) {
+        i64_const(c, imm);
+    } else {
+        local_get(c, 2 + src);
+        i64_const(c, imm);
+        c.push_back(0x7c);
+    }
     i64_const(c, static_cast<int64_t>(mask));
     c.push_back(0x83);
     c.push_back(0xa7);
@@ -100,15 +104,9 @@ static void emit_address(std::vector<uint8_t>& c, uint32_t src,
 }
 
 static void emit_load(std::vector<uint8_t>& c, uint32_t src,
-                      int64_t imm, uint32_t mask) {
-    emit_address(c, src, imm, mask);
+                      int64_t imm, uint32_t mask, bool zero_register) {
+    emit_address(c, src, imm, mask, zero_register);
     i64_load(c);
-}
-
-static void emit_store(std::vector<uint8_t>& c, uint32_t src,
-                       int64_t imm, uint32_t mask) {
-    emit_address(c, src, imm, mask);
-    i64_store(c);
 }
 
 static int reg(uint8_t r) {
@@ -128,6 +126,8 @@ static bool supported(const Instruction& ins) {
 bool WasmJit::compile(const Program& program) {
     module_.clear();
 
+    // Fail closed: unsupported instructions never produce a partially JITed
+    // program that could silently change the RandomX result.
     for (uint32_t pc = 0; pc < program.getSize(); ++pc) {
         if (!supported(program(static_cast<int>(pc)))) return false;
     }
@@ -150,36 +150,36 @@ bool WasmJit::compile(const Program& program) {
             local_get(code, 2 + dst);
             local_get(code, 2 + src);
             i64_const(code, static_cast<int64_t>(ins.getModShift()));
-            code.push_back(0x86);
+            code.push_back(0x86); // i64.shl
             if (dst == RegisterNeedsDisplacement) {
                 i64_const(code, simm);
-                code.push_back(0x7c);
+                code.push_back(0x7c); // i64.add
             }
-            code.push_back(0x7c);
+            code.push_back(0x7c); // i64.add
             local_set(code, 2 + dst);
         }
         else if (op < ceil_IADD_M) {
             local_get(code, 2 + dst);
-            const uint32_t mask = (src == dst) ? ScratchpadL3Mask :
+            const bool zero = src == dst;
+            const uint32_t mask = zero ? ScratchpadL3Mask :
                                   (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
-            const uint32_t address_reg = (src == dst) ? 0u : static_cast<uint32_t>(src);
-            emit_load(code, address_reg, simm, mask);
-            code.push_back(0x7c);
+            emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
+            code.push_back(0x7c); // i64.add
             local_set(code, 2 + dst);
         }
         else if (op < ceil_ISUB_R) {
             local_get(code, 2 + dst);
             if (src == dst) i64_const(code, simm);
             else local_get(code, 2 + src);
-            code.push_back(0x7d);
+            code.push_back(0x7d); // i64.sub
             local_set(code, 2 + dst);
         }
         else if (op < ceil_ISUB_M) {
             local_get(code, 2 + dst);
-            const uint32_t mask = (src == dst) ? ScratchpadL3Mask :
+            const bool zero = src == dst;
+            const uint32_t mask = zero ? ScratchpadL3Mask :
                                   (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
-            const uint32_t address_reg = (src == dst) ? 0u : static_cast<uint32_t>(src);
-            emit_load(code, address_reg, simm, mask);
+            emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
             code.push_back(0x7d);
             local_set(code, 2 + dst);
         }
@@ -187,22 +187,21 @@ bool WasmJit::compile(const Program& program) {
             local_get(code, 2 + dst);
             if (src == dst) i64_const(code, simm);
             else local_get(code, 2 + src);
-            code.push_back(0x7e);
+            code.push_back(0x7e); // i64.mul
             local_set(code, 2 + dst);
         }
         else if (op < ceil_IMUL_M) {
             local_get(code, 2 + dst);
-            const uint32_t mask = (src == dst) ? ScratchpadL3Mask :
+            const bool zero = src == dst;
+            const uint32_t mask = zero ? ScratchpadL3Mask :
                                   (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
-            const uint32_t address_reg = (src == dst) ? 0u : static_cast<uint32_t>(src);
-            emit_load(code, address_reg, simm, mask);
+            emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
             code.push_back(0x7e);
             local_set(code, 2 + dst);
         }
-        else if (op < ceil_IMULH_R) {
-            return false;
-        }
         else if (op < ceil_IMUL_RCP) {
+            // IMULH_R/IMULH_M/ISMULH_R/ISMULH_M are Stage 3. Their exact
+            // 128-bit high-product lowering is intentionally not guessed here.
             return false;
         }
         else if (op < ceil_INEG_R) {
@@ -215,8 +214,9 @@ bool WasmJit::compile(const Program& program) {
             }
         }
         else if (op < ceil_IXOR_R) {
-            local_get(code, 2 + dst);
+            // INEG_R: 0 - dst, modulo 2^64.
             i64_const(code, 0);
+            local_get(code, 2 + dst);
             code.push_back(0x7d);
             local_set(code, 2 + dst);
         }
@@ -224,15 +224,15 @@ bool WasmJit::compile(const Program& program) {
             local_get(code, 2 + dst);
             if (src == dst) i64_const(code, simm);
             else local_get(code, 2 + src);
-            code.push_back(0x85);
+            code.push_back(0x85); // i64.xor
             local_set(code, 2 + dst);
         }
         else if (op < ceil_IROR_R) {
             local_get(code, 2 + dst);
-            const uint32_t mask = (src == dst) ? ScratchpadL3Mask :
+            const bool zero = src == dst;
+            const uint32_t mask = zero ? ScratchpadL3Mask :
                                   (ins.getModMem() ? ScratchpadL1Mask : ScratchpadL2Mask);
-            const uint32_t address_reg = (src == dst) ? 0u : static_cast<uint32_t>(src);
-            emit_load(code, address_reg, simm, mask);
+            emit_load(code, static_cast<uint32_t>(src), simm, mask, zero);
             code.push_back(0x85);
             local_set(code, 2 + dst);
         }
@@ -240,7 +240,7 @@ bool WasmJit::compile(const Program& program) {
             local_get(code, 2 + dst);
             if (src == dst) i64_const(code, static_cast<int64_t>(ins.getImm32()));
             else local_get(code, 2 + src);
-            code.push_back(0x8a);
+            code.push_back(0x8a); // i64.rotr
             local_set(code, 2 + dst);
         }
         else if (op < ceil_ISWAP_R) {
