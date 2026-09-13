@@ -11,53 +11,66 @@
  * * Redistributions in binary form must reproduce the above copyright notice,
  *   this list of conditions and the following disclaimer in the documentation
  *   and/or other materials provided with the distribution.
+ * * Neither the name of the copyright holder nor the names of its contributors
+ *   may be used to endorse or promote products derived from this software
+ *   without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED. IN NO EVENT SHALL THE
+ * COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES.
  */
 
 #ifndef RANDOMX_PROGRAM_H
 #define RANDOMX_PROGRAM_H
 
+#include <cstdint>
 #include <iostream>
+
+#include "common.hpp"
 #include "instruction.hpp"
-#include "virtual_machine.hpp"
-#include "intrin_portable.h"
+#include "blake2/endian.h"
 
 namespace randomx {
+
+	struct ProgramConfiguration {
+		uint64_t eMask[2];
+		uint32_t readReg0, readReg1, readReg2, readReg3;
+	};
 
 	class Program {
 	public:
 		Program() {
 			static_assert(sizeof(programBuffer) == RANDOMX_PROGRAM_SIZE * sizeof(Instruction), "Invalid program buffer size");
-			static_assert(sizeof(entropyBuffer) == RANDOMX_ENTROPY_SIZE, "Invalid entropy buffer size");
+			static_assert(sizeof(entropyBuffer) == 16 * sizeof(uint64_t), "Invalid entropy buffer size");
 		}
+
 		void read(const void* data) {
 			memcpy(programBuffer, data, sizeof(programBuffer));
-			memcpy(entropyBuffer, (uint8_t*)data + sizeof(programBuffer), sizeof(entropyBuffer));
+			memcpy(entropyBuffer, (const uint8_t*)data + sizeof(programBuffer), sizeof(entropyBuffer));
 		}
+
+		Instruction& operator()(int pc) {
+			return programBuffer[pc];
+		}
+
 		const Instruction& operator()(int pc) const {
 			return programBuffer[pc];
 		}
+
 		friend std::ostream& operator<<(std::ostream& os, const Program& p) {
 			p.print(os);
 			return os;
 		}
+
 		uint64_t getEntropy(int i) {
 			return load64(&entropyBuffer[i]);
 		}
+
 		uint32_t getSize() const {
 			return RANDOMX_PROGRAM_SIZE;
 		}
+
 	private:
 		void print(std::ostream& os) const {
 			for (int i = 0; i < RANDOMX_PROGRAM_SIZE; ++i) {
@@ -65,9 +78,12 @@ namespace randomx {
 				os << instr;
 			}
 		}
+
+		uint64_t entropyBuffer[16];
 		Instruction programBuffer[RANDOMX_PROGRAM_SIZE];
-		uint8_t entropyBuffer[RANDOMX_ENTROPY_SIZE];
 	};
+
+	static_assert(sizeof(Program) % 64 == 0, "Invalid size of class randomx::Program");
 
 }
 
