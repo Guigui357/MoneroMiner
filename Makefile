@@ -60,20 +60,17 @@ randomx:
 	@if [ -f "$(RANDOMX_CACHE)" ]; then \
 		old_src=$$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$(RANDOMX_CACHE)" | tr -d '\r'); \
 		if [ -n "$$old_src" ] && [ "$$old_src" != "$(RANDOMX_SRC_ABS)" ]; then \
+			echo "RandomX source changed, cleaning build..."; \
 			rm -rf "$(RANDOMX_BUILD)"; \
-			mkdir -p "$(RANDOMX_BUILD)"; \
 		fi; \
 	fi
-	@cd "$(RANDOMX_DIR)" && mkdir -p build && cd build && \
-	emcmake cmake -DCMAKE_BUILD_TYPE=Release \
-	        -DBUILD_SHARED_LIBS=OFF \
-	        -DCMAKE_C_FLAGS_RELEASE="-O3 -flto -msimd128" \
-	        -DCMAKE_CXX_FLAGS_RELEASE="-O3 -flto -msimd128" \
-	        -DCMAKE_EXE_LINKER_FLAGS="-flto" \
-	        -DCMAKE_SHARED_LINKER_FLAGS="-flto" \
-	        -DARCH=generic \
-	        .. && \
-	$(MAKE) randomx -j$(shell nproc 2>/dev/null || echo 4)
+	@mkdir -p "$(RANDOMX_BUILD)"
+	@cd "$(RANDOMX_DIR)" && \
+		emcmake cmake -S . -B build-wasm \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DRANDOMX_WASM_SIMD=ON \
+			-DRANDOMX_WASM_PTHREADS=ON
+	@cmake --build "$(RANDOMX_BUILD)" -j$(shell nproc)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@echo "Compiling optimized WebAssembly Object $<..."
