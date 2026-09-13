@@ -180,7 +180,18 @@ bool WasmJit::compile(const Program& program) {
     module_.clear();
 
     for (uint32_t pc = 0; pc < program.getSize(); ++pc) {
-        if (!supported(program(static_cast<int>(pc)))) return false;
+        const Instruction& ins = program(static_cast<int>(pc));
+
+        if (!supported(ins)) {
+            std::cout
+                << "[WASM-JIT] UNSUPPORTED pc="
+                << pc
+                << " opcode="
+                << static_cast<int>(ins.opcode)
+                << std::endl;
+
+            return false;
+        }
     }
 
     std::vector<uint8_t> code;
