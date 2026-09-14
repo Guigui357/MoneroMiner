@@ -726,9 +726,16 @@ bool login(
     picojson::object params;
 
 
-    params["login"] =
-        picojson::value(wallet);
+    std::string loginName = wallet;
 
+    if (!worker.empty())
+    {
+        loginName += "+";
+        loginName += worker;
+    }
+
+    params["login"] =
+        picojson::value(loginName);
 
     params["pass"] =
         picojson::value(password);
