@@ -146,7 +146,16 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
             console.log('[WASM-JIT] WebAssembly.Instance = OK; rx_jit = ACTIVE');
         }
 
-        fn(regs_ptr, f_ptr, e_ptr, a_ptr, scratchpad_ptr);
+        try {
+            fn(regs_ptr, f_ptr, e_ptr, a_ptr, scratchpad_ptr);
+        } catch (e) {
+            console.error('[WASM-JIT] RX_JIT_TRAP:', e);
+            console.error('[WASM-JIT] RX_JIT_TRAP_NAME:', e && e.name);
+            console.error('[WASM-JIT] RX_JIT_TRAP_MESSAGE:', e && e.message);
+            console.error('[WASM-JIT] RX_JIT_TRAP_STACK:', e && e.stack);
+            return 0;
+        }
+
         stats.executions++;
         if (stats.executions === 1 || (stats.executions % 10000) === 0) {
             console.log('[WASM-JIT] execucoes=' + stats.executions);
