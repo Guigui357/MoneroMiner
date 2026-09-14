@@ -137,6 +137,7 @@ static void store_reg(std::vector<uint8_t>& c,
 //   21..28 = E
 //   29..36 = A
 //   37     = fprc
+//   38     = pc
 static void load_fp_lane(std::vector<uint8_t>& c,
                          uint32_t ptr_local,
                          uint32_t index,
@@ -329,7 +330,6 @@ static const char* opcode_name(uint32_t op) {
 
 static bool validate_opcode(uint32_t op,
                             uint32_t pc) {
-    // An actual RandomX opcode is exactly one byte.
     if (op > 255u) {
         std::cout
             << "[WASM-JIT] INVALID OPCODE"
@@ -449,39 +449,7 @@ static bool supported(const Instruction& ins) {
     const uint32_t op =
         static_cast<uint32_t>(ins.opcode);
 
-    // All valid RandomX opcodes are one byte.
-    if (op > 255u)
-        return false;
-
-    /*
-     * CBRANCH occupies:
-     *
-     *     ceil_FSQRT_R <= opcode < ceil_CBRANCH
-     *
-     * With the current RandomX configuration this is:
-     *
-     *     214 .. 238
-     *
-     * CFROUND starts at opcode 239.
-     *
-     * IMPORTANT:
-     *
-     * The old code used:
-     *
-     *     op >= ceil_CBRANCH && op < ceil_CFROUND
-     *
-     * which rejected CFROUND itself.
-     */
-    if (op >= ceil_FSQRT_R &&
-        op < ceil_CBRANCH) {
-        return false;
-    }
-
-    /*
-     * ceil_NOP is 256 with the current configuration.
-     * Since opcode is uint8_t, valid values are 0..255.
-     */
-    return true;
+    return op <= 255u;
 }
 
 } // namespace
@@ -490,13 +458,16 @@ static bool supported(const Instruction& ins) {
 bool WasmJit::compile(const Program& program) {
     module_.clear();
 
+    const uint32_t program_size =
+        static_cast<uint32_t>(program.getSize());
+
     /*
      * ------------------------------------------------------------
      * PASS 1: validate all RandomX instructions
      * ------------------------------------------------------------
      */
     for (uint32_t pc = 0;
-         pc < program.getSize();
+         pc < program_size;
          ++pc) {
 
         const Instruction& ins =
@@ -526,9 +497,130 @@ bool WasmJit::compile(const Program& program) {
         }
     }
 
+    /*
+     * ------------------------------------------------------------
+     * PASS 2: calculate the real RandomX CBRANCH targets.
+     *
+     * RandomX does not store an explicit target in CBRANCH.
+     *
+     * The target is:
+     *
+     *     instruction after the last instruction that modified
+     *     the destination integer register.
+     *
+     * If the register was never modified:
+     *
+     *     target = 0
+     *
+     * CBRANCH then marks every integer register as modified at
+     * the current instruction.
+     * ------------------------------------------------------------
+     */
+    std::vector<uint32_t> branch_target(
+        program_size,
+        0
+    );
+
+    uint32_t last_modified[RegistersCount];
+
+    for (uint32_t r = 0;
+         r < RegistersCount;
+         ++r) {
+        last_modified[r] = UINT32_MAX;
+    }
+
+    for (uint32_t pc = 0;
+         pc < program_size;
+         ++pc) {
+
+        const Instruction& ins =
+            program(static_cast<int>(pc));
+
+        const uint32_t op =
+            static_cast<uint32_t>(ins.opcode);
+
+        const uint32_t dst =
+            static_cast<uint32_t>(reg(ins.dst));
+
+        const uint32_t src =
+            static_cast<uint32_t>(reg(ins.src));
+
+        /*
+         * IADD_RS through ISMULH_M all modify dst.
+         */
+        if (op < ceil_IMUL_RCP) {
+
+            last_modified[dst] = pc;
+        }
+
+        /*
+         * IMUL_RCP only changes the register when the divisor
+         * requires an actual reciprocal multiplication.
+         */
+        else if (op < ceil_INEG_R) {
+
+            const uint32_t divisor =
+                ins.getImm32();
+
+            if (!isZeroOrPowerOf2(divisor)) {
+                last_modified[dst] = pc;
+            }
+        }
+
+        /*
+         * INEG_R through IROL_R modify dst.
+         */
+        else if (op < ceil_ISWAP_R) {
+
+            last_modified[dst] = pc;
+        }
+
+        /*
+         * ISWAP_R modifies both registers when they differ.
+         */
+        else if (op < ceil_FSWAP_R) {
+
+            if (dst != src) {
+                last_modified[dst] = pc;
+                last_modified[src] = pc;
+            }
+        }
+
+        /*
+         * FSWAP_R through FSQRT_R do not modify integer
+         * register usage.
+         */
+        else if (op < ceil_CBRANCH) {
+            // Nothing.
+        }
+
+        /*
+         * CBRANCH target calculation.
+         */
+        else if (op < ceil_CFROUND) {
+
+            if (last_modified[dst] == UINT32_MAX) {
+                branch_target[pc] = 0;
+            } else {
+                branch_target[pc] =
+                    last_modified[dst] + 1;
+            }
+
+            /*
+             * Official RandomX behavior:
+             *
+             * CBRANCH invalidates the previous modification
+             * information for every integer register.
+             */
+            for (uint32_t r = 0;
+                 r < RegistersCount;
+                 ++r) {
+                last_modified[r] = pc;
+            }
+        }
+    }
 
     std::vector<uint8_t> code;
-
 
     /*
      * ------------------------------------------------------------
@@ -549,7 +641,6 @@ bool WasmJit::compile(const Program& program) {
             static_cast<uint32_t>(5 + r)
         );
     }
-
 
     /*
      * ------------------------------------------------------------
@@ -611,29 +702,112 @@ bool WasmJit::compile(const Program& program) {
         }
     }
 
-
     /*
      * ------------------------------------------------------------
-     * Initialize fprc
+     * Initialize fprc.
      * ------------------------------------------------------------
      */
     i32_const(code, 0);
     local_set(code, 37);
 
+    /*
+     * ------------------------------------------------------------
+     * Initialize program counter.
+     * ------------------------------------------------------------
+     */
+    i32_const(code, 0);
+    local_set(code, 38);
 
     /*
      * ------------------------------------------------------------
-     * Compile RandomX program
+     * RANDOMX DISPATCHER
+     *
+     * WASM structured control flow cannot directly jump to an
+     * arbitrary instruction emitted earlier.
+     *
+     * Therefore the JIT uses:
+     *
+     *     pc
+     *     block $done
+     *       loop $dispatch
+     *
+     *          if (pc == program_size)
+     *              br $done
+     *
+     *          if (pc == 0)
+     *              instruction 0
+     *              br $dispatch
+     *
+     *          if (pc == 1)
+     *              instruction 1
+     *              br $dispatch
+     *
+     *          ...
+     *
+     *       end
+     *     end
+     *
+     * This implements real RandomX control flow. It is intentionally
+     * correctness-first; a later optimized version can replace this
+     * with a br_table/threaded dispatcher.
+     * ------------------------------------------------------------
+     */
+
+    /*
+     * block $done
+     */
+    code.push_back(0x02);
+    code.push_back(0x40);
+
+    /*
+     * loop $dispatch
+     */
+    code.push_back(0x03);
+    code.push_back(0x40);
+
+    /*
+     * if (pc == program_size)
+     *
+     * Nesting while inside:
+     *
+     *   if
+     *     br 2
+     *   end
+     *
+     * depth 0 = if
+     * depth 1 = loop
+     * depth 2 = done block
+     */
+    local_get(code, 38);
+    i32_const(
+        code,
+        static_cast<int32_t>(program_size)
+    );
+
+    code.push_back(0x46); // i32.eq
+
+    code.push_back(0x04); // if
+    code.push_back(0x40); // empty block type
+
+    code.push_back(0x0c); // br
+    uleb(code, 2);
+
+    code.push_back(0x0b); // end if
+
+    /*
+     * ------------------------------------------------------------
+     * Emit every RandomX instruction behind a pc comparison.
      * ------------------------------------------------------------
      */
     for (uint32_t pc = 0;
-         pc < program.getSize();
+         pc < program_size;
          ++pc) {
 
         const Instruction& ins =
             program(static_cast<int>(pc));
 
-        const int op = ins.opcode;
+        const int op =
+            ins.opcode;
 
         const int dst =
             reg(ins.dst);
@@ -654,6 +828,20 @@ bool WasmJit::compile(const Program& program) {
                 )
             );
 
+        /*
+         * if (pc == this instruction)
+         */
+        local_get(code, 38);
+
+        i32_const(
+            code,
+            static_cast<int32_t>(pc)
+        );
+
+        code.push_back(0x46); // i32.eq
+
+        code.push_back(0x04); // if
+        code.push_back(0x40); // empty block type
 
         /*
          * --------------------------------------------------------
@@ -686,7 +874,6 @@ bool WasmJit::compile(const Program& program) {
                 5 + dst
             );
         }
-
 
         /*
          * --------------------------------------------------------
@@ -726,7 +913,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-
         /*
          * --------------------------------------------------------
          * ISUB_R
@@ -751,7 +937,6 @@ bool WasmJit::compile(const Program& program) {
                 5 + dst
             );
         }
-
 
         /*
          * --------------------------------------------------------
@@ -791,7 +976,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-
         /*
          * --------------------------------------------------------
          * IMUL_R
@@ -816,7 +1000,6 @@ bool WasmJit::compile(const Program& program) {
                 5 + dst
             );
         }
-
 
         /*
          * --------------------------------------------------------
@@ -856,7 +1039,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-
         /*
          * --------------------------------------------------------
          * IMULH_R
@@ -874,7 +1056,6 @@ bool WasmJit::compile(const Program& program) {
                 5 + dst
             );
         }
-
 
         /*
          * --------------------------------------------------------
@@ -911,7 +1092,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-
         /*
          * --------------------------------------------------------
          * ISMULH_R
@@ -929,7 +1109,6 @@ bool WasmJit::compile(const Program& program) {
                 5 + dst
             );
         }
-
 
         /*
          * --------------------------------------------------------
@@ -966,7 +1145,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-
         /*
          * --------------------------------------------------------
          * IMUL_RCP
@@ -1000,7 +1178,6 @@ bool WasmJit::compile(const Program& program) {
             }
         }
 
-
         /*
          * --------------------------------------------------------
          * INEG_R
@@ -1022,7 +1199,6 @@ bool WasmJit::compile(const Program& program) {
                 5 + dst
             );
         }
-
 
         /*
          * --------------------------------------------------------
@@ -1048,7 +1224,6 @@ bool WasmJit::compile(const Program& program) {
                 5 + dst
             );
         }
-
 
         /*
          * --------------------------------------------------------
@@ -1088,7 +1263,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-
         /*
          * --------------------------------------------------------
          * IROR_R
@@ -1121,7 +1295,6 @@ bool WasmJit::compile(const Program& program) {
                 5 + dst
             );
         }
-
 
         /*
          * --------------------------------------------------------
@@ -1156,7 +1329,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-
         /*
          * --------------------------------------------------------
          * ISWAP_R
@@ -1187,7 +1359,6 @@ bool WasmJit::compile(const Program& program) {
                 );
             }
         }
-
 
         /*
          * --------------------------------------------------------
@@ -1223,7 +1394,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-
         /*
          * --------------------------------------------------------
          * FADD_R
@@ -1257,7 +1427,6 @@ bool WasmJit::compile(const Program& program) {
                 f_local(0, fdst, 1)
             );
         }
-
 
         /*
          * --------------------------------------------------------
@@ -1305,7 +1474,6 @@ bool WasmJit::compile(const Program& program) {
             }
         }
 
-
         /*
          * --------------------------------------------------------
          * FSUB_R
@@ -1339,7 +1507,6 @@ bool WasmJit::compile(const Program& program) {
                 f_local(0, fdst, 1)
             );
         }
-
 
         /*
          * --------------------------------------------------------
@@ -1387,7 +1554,6 @@ bool WasmJit::compile(const Program& program) {
             }
         }
 
-
         /*
          * --------------------------------------------------------
          * FSCAL_R
@@ -1420,7 +1586,6 @@ bool WasmJit::compile(const Program& program) {
                 );
             }
         }
-
 
         /*
          * --------------------------------------------------------
@@ -1455,7 +1620,6 @@ bool WasmJit::compile(const Program& program) {
                 f_local(1, fdst, 1)
             );
         }
-
 
         /*
          * --------------------------------------------------------
@@ -1503,7 +1667,6 @@ bool WasmJit::compile(const Program& program) {
             }
         }
 
-
         /*
          * --------------------------------------------------------
          * FSQRT_R
@@ -1536,54 +1699,189 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-
         /*
          * --------------------------------------------------------
          * CBRANCH
          *
-         * Still unsupported in this straight-line JIT.
+         * RandomX semantics:
+         *
+         *   dst = dst + cimm
+         *
+         * where:
+         *
+         *   cimm = sign_extended(imm32)
+         *          | (1 << (modcond + JumpOffset))
+         *
+         * then:
+         *
+         *   clear bit (b - 1)
+         *
+         * and branch when:
+         *
+         *   (dst & condition_mask) == 0
+         *
+         * The target was calculated before code generation using
+         * RandomX's register modification tracking.
          * --------------------------------------------------------
          */
         else if (op < ceil_CBRANCH) {
 
-            return false;
-        }
+            const uint32_t shift =
+                static_cast<uint32_t>(
+                    ins.getModCond()
+                ) +
+                RANDOMX_JUMP_OFFSET;
 
+            /*
+             * sign-extended imm32
+             */
+            const uint64_t signed_imm =
+                static_cast<uint64_t>(
+                    static_cast<int64_t>(
+                        static_cast<int32_t>(
+                            ins.getImm32()
+                        )
+                    )
+                );
+
+            /*
+             * RandomX CBRANCH:
+             *
+             *   cimm |= 1 << shift
+             *   cimm &= ~(1 << (shift - 1))
+             */
+            uint64_t cimm =
+                signed_imm |
+                (uint64_t(1) << shift);
+
+            if (shift > 0) {
+                cimm &=
+                    ~(uint64_t(1) << (shift - 1));
+            }
+
+            /*
+             * ConditionMask_Calculated << modcond
+             *
+             * Default:
+             *
+             *   JumpBits = 8
+             *
+             * therefore:
+             *
+             *   ((1 << 8) - 1) << shift
+             */
+            const uint64_t condition_mask =
+                ((uint64_t(1) << RANDOMX_JUMP_BITS) - 1ULL)
+                << shift;
+
+            /*
+             * dst += cimm
+             */
+            local_get(
+                code,
+                5 + dst
+            );
+
+            i64_const(
+                code,
+                static_cast<int64_t>(cimm)
+            );
+
+            code.push_back(0x7c); // i64.add
+
+            local_set(
+                code,
+                5 + dst
+            );
+
+            /*
+             * Default:
+             *
+             *     pc = pc + 1
+             *
+             * This is the not-taken path.
+             */
+            local_get(code, 38);
+
+            i32_const(code, 1);
+
+            code.push_back(0x6a); // i32.add
+
+            local_set(code, 38);
+
+            /*
+             * Test:
+             *
+             *     (dst & condition_mask) == 0
+             */
+            local_get(
+                code,
+                5 + dst
+            );
+
+            i64_const(
+                code,
+                static_cast<int64_t>(
+                    condition_mask
+                )
+            );
+
+            code.push_back(0x83); // i64.and
+
+            i64_const(code, 0);
+
+            code.push_back(0x51); // i64.eq
+
+            /*
+             * if condition is true:
+             *
+             *     pc = branch_target[pc]
+             */
+            code.push_back(0x04);
+            code.push_back(0x40);
+
+            i32_const(
+                code,
+                static_cast<int32_t>(
+                    branch_target[pc]
+                )
+            );
+
+            local_set(
+                code,
+                38
+            );
+
+            code.push_back(0x0b);
+
+            /*
+             * CBRANCH has already selected the next pc.
+             *
+             * Jump directly back to dispatch.
+             *
+             * Current nesting:
+             *
+             *   if(pc == ...)
+             *       br 1 -> loop
+             */
+            code.push_back(0x0c);
+            uleb(code, 1);
+
+            /*
+             * The following generic pc increment is therefore
+             * unreachable for the CBRANCH runtime path.
+             */
+        }
 
         /*
          * --------------------------------------------------------
          * CFROUND
-         *
-         * RandomX v2 semantics:
-         *
-         *     tmp = ROTR64(src, imm32 & 63)
-         *
-         *     if ((tmp & 0x3c) == 0)
-         *         fprc = tmp & 3
-         *
-         * Important:
-         *
-         * - src is the RandomX integer source register
-         * - imm32 is the rotate amount
-         * - fprc is NOT simply imm32
-         * - fprc remains unchanged when bits 2..5 are non-zero
-         *
-         * WASM:
-         *
-         *     0x8a = i64.rotr
-         *     0x83 = i64.and
-         *     0x51 = i64.eq
-         *     0x04 = if
-         *     0x40 = empty block type
-         *     0xa7 = i32.wrap_i64
-         *     0x0b = end
          * --------------------------------------------------------
          */
         else if (op < ceil_CFROUND) {
 
             const uint32_t rotate =
                 ins.getImm32() & 63u;
-
 
             /*
              * Build:
@@ -1600,36 +1898,27 @@ bool WasmJit::compile(const Program& program) {
                 static_cast<int64_t>(rotate)
             );
 
-            // i64.rotr
-            code.push_back(0x8a);
+            code.push_back(0x8a); // i64.rotr
 
-            // & 0x3c
             i64_const(
                 code,
                 0x3c
             );
 
-            // i64.and
-            code.push_back(0x83);
+            code.push_back(0x83); // i64.and
 
-            // == 0
             i64_const(
                 code,
                 0
             );
 
-            // i64.eq
-            code.push_back(0x51);
-
+            code.push_back(0x51); // i64.eq
 
             /*
-             * if (...)
+             * if(...)
              */
             code.push_back(0x04);
-
-            // block type = empty
             code.push_back(0x40);
-
 
             /*
              * fprc =
@@ -1646,30 +1935,21 @@ bool WasmJit::compile(const Program& program) {
                 static_cast<int64_t>(rotate)
             );
 
-            // i64.rotr
-            code.push_back(0x8a);
+            code.push_back(0x8a); // i64.rotr
 
             i64_const(
                 code,
                 3
             );
 
-            // i64.and
-            code.push_back(0x83);
+            code.push_back(0x83); // i64.and
 
-            // i32.wrap_i64
-            code.push_back(0xa7);
+            code.push_back(0xa7); // i32.wrap_i64
 
-            // fprc local = 37
             local_set(code, 37);
 
-
-            /*
-             * end
-             */
             code.push_back(0x0b);
         }
-
 
         /*
          * --------------------------------------------------------
@@ -1701,17 +1981,65 @@ bool WasmJit::compile(const Program& program) {
             i64_store(code);
         }
 
-
         /*
          * --------------------------------------------------------
          * NOP
          * --------------------------------------------------------
          */
         else if (op < ceil_NOP) {
-            // Nothing to emit.
+            // Nothing.
         }
+
+        /*
+         * --------------------------------------------------------
+         * Normal instruction completion.
+         *
+         * CBRANCH already emitted br 1 above.
+         *
+         * Every other instruction advances:
+         *
+         *     pc++
+         *
+         * and returns to the dispatch loop.
+         * --------------------------------------------------------
+         */
+        local_get(code, 38);
+
+        i32_const(code, 1);
+
+        code.push_back(0x6a); // i32.add
+
+        local_set(code, 38);
+
+        /*
+         * Leave this instruction's if and go to dispatch loop.
+         *
+         * Current nesting:
+         *
+         *   if(pc == ...)
+         *       br 1
+         *
+         * depth 0 = if
+         * depth 1 = loop
+         */
+        code.push_back(0x0c);
+        uleb(code, 1);
+
+        /*
+         * end if(pc == ...)
+         */
+        code.push_back(0x0b);
     }
 
+    /*
+     * End dispatch loop.
+     */
+    code.push_back(0x0b);
+
+    /*
+     * End done block.
+     */
+    code.push_back(0x0b);
 
     /*
      * ------------------------------------------------------------
@@ -1732,7 +2060,6 @@ bool WasmJit::compile(const Program& program) {
             static_cast<uint32_t>(r)
         );
     }
-
 
     /*
      * ------------------------------------------------------------
@@ -1788,12 +2115,10 @@ bool WasmJit::compile(const Program& program) {
         }
     }
 
-
     /*
      * End of rx_jit function.
      */
     code.push_back(0x0b);
-
 
     /*
      * ------------------------------------------------------------
@@ -1807,7 +2132,6 @@ bool WasmJit::compile(const Program& program) {
             0x01, 0x00, 0x00, 0x00
         }
     );
-
 
     /*
      * ------------------------------------------------------------
@@ -1823,7 +2147,6 @@ bool WasmJit::compile(const Program& program) {
     std::vector<uint8_t> type;
 
     uleb(type, 5);
-
 
     /*
      * Type 0:
@@ -1844,7 +2167,6 @@ bool WasmJit::compile(const Program& program) {
 
     uleb(type, 0);
 
-
     /*
      * Type 1:
      *
@@ -1856,7 +2178,6 @@ bool WasmJit::compile(const Program& program) {
     type.push_back(0x7e);
     uleb(type, 1);
     type.push_back(0x7e);
-
 
     /*
      * Type 2:
@@ -1871,7 +2192,6 @@ bool WasmJit::compile(const Program& program) {
     uleb(type, 1);
     type.push_back(0x7e);
 
-
     /*
      * Type 3:
      *
@@ -1884,7 +2204,6 @@ bool WasmJit::compile(const Program& program) {
     uleb(type, 1);
     type.push_back(0x7e);
 
-
     /*
      * Type 4:
      *
@@ -1896,13 +2215,11 @@ bool WasmJit::compile(const Program& program) {
     uleb(type, 1);
     type.push_back(0x7e);
 
-
     section(
         module_,
         1,
         type
     );
-
 
     /*
      * ------------------------------------------------------------
@@ -1913,13 +2230,11 @@ bool WasmJit::compile(const Program& program) {
 
     uleb(imports, 9);
 
-
     // 0: mulh_u64
     bytes(imports, "env", 3);
     bytes(imports, "mulh_u64", 8);
     imports.push_back(0x00);
     uleb(imports, 1);
-
 
     // 1: mulh_s64
     bytes(imports, "env", 3);
@@ -1927,13 +2242,11 @@ bool WasmJit::compile(const Program& program) {
     imports.push_back(0x00);
     uleb(imports, 1);
 
-
     // 2: fp_add
     bytes(imports, "env", 3);
     bytes(imports, "fp_add", 6);
     imports.push_back(0x00);
     uleb(imports, 2);
-
 
     // 3: fp_sub
     bytes(imports, "env", 3);
@@ -1941,13 +2254,11 @@ bool WasmJit::compile(const Program& program) {
     imports.push_back(0x00);
     uleb(imports, 2);
 
-
     // 4: fp_mul
     bytes(imports, "env", 3);
     bytes(imports, "fp_mul", 6);
     imports.push_back(0x00);
     uleb(imports, 2);
-
 
     // 5: fp_div
     bytes(imports, "env", 3);
@@ -1955,20 +2266,17 @@ bool WasmJit::compile(const Program& program) {
     imports.push_back(0x00);
     uleb(imports, 2);
 
-
     // 6: fp_sqrt
     bytes(imports, "env", 3);
     bytes(imports, "fp_sqrt", 7);
     imports.push_back(0x00);
     uleb(imports, 3);
 
-
     // 7: fp_from_i32
     bytes(imports, "env", 3);
     bytes(imports, "fp_from_i32", 11);
     imports.push_back(0x00);
     uleb(imports, 4);
-
 
     // 8: memory
     bytes(imports, "env", 3);
@@ -1977,22 +2285,16 @@ bool WasmJit::compile(const Program& program) {
     imports.push_back(0x00);
     uleb(imports, 1);
 
-
     section(
         module_,
         2,
         imports
     );
 
-
     /*
      * ------------------------------------------------------------
      * FUNCTION SECTION
      * ------------------------------------------------------------
-     *
-     * One local function:
-     *
-     *     type 0 = rx_jit
      */
     std::vector<uint8_t> funcs;
 
@@ -2005,18 +2307,10 @@ bool WasmJit::compile(const Program& program) {
         funcs
     );
 
-
     /*
      * ------------------------------------------------------------
      * EXPORT SECTION
      * ------------------------------------------------------------
-     *
-     * Function index:
-     *
-     * Imports:
-     *   0..7 = functions
-     *
-     *   8 = local rx_jit
      */
     std::vector<uint8_t> exports;
 
@@ -2038,7 +2332,6 @@ bool WasmJit::compile(const Program& program) {
         exports
     );
 
-
     /*
      * ------------------------------------------------------------
      * CODE SECTION
@@ -2049,26 +2342,28 @@ bool WasmJit::compile(const Program& program) {
      *   8  x i64 = integer registers
      *   24 x i64 = F/E/A
      *   1  x i32 = fprc
+     *   1  x i32 = pc
+     * ------------------------------------------------------------
      */
     std::vector<uint8_t> body;
 
-    uleb(body, 3);
-
+    uleb(body, 4);
 
     // 8 x i64
     uleb(body, 8);
     body.push_back(0x7e);
 
-
     // 24 x i64
     uleb(body, 24);
     body.push_back(0x7e);
 
-
-    // 1 x i32
+    // 1 x i32 = fprc
     uleb(body, 1);
     body.push_back(0x7f);
 
+    // 1 x i32 = pc
+    uleb(body, 1);
+    body.push_back(0x7f);
 
     /*
      * Function instructions.
@@ -2078,7 +2373,6 @@ bool WasmJit::compile(const Program& program) {
         code.begin(),
         code.end()
     );
-
 
     std::vector<uint8_t> codes;
 
@@ -2097,13 +2391,11 @@ bool WasmJit::compile(const Program& program) {
         body.end()
     );
 
-
     section(
         module_,
         10,
         codes
     );
-
 
     return true;
 }
