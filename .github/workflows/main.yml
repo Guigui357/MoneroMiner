@@ -156,47 +156,50 @@ jobs:
           wc -l RandomX/src/wasm_jit_runtime.cpp
 
 
-      # ============================================================
-      # VERIFY OLD DEBUG LOGS ARE REALLY GONE
-      # ============================================================
-
-      - name: Verify removed OLD JIT logs
+      - name: Diagnose old JIT logs in generated miner.js
         run: |
-          set -e
+          set +e
 
           echo "========================================"
-          echo "CHECKING OLD JIT LOGS"
+          echo "DIAGNOSTICANDO LOGS ANTIGOS NO miner.js"
           echo "========================================"
-
-          OLD_LOG_PATTERN='INICIANDO COMPILE|COMPILE TERMINOU|EXECUTANDO rx_jit|FALHA: execucao do rx_jit|wasmJitReady|JIT ESTA PRONTO'
 
           echo
-          echo "--- wasm_jit.cpp ---"
+          echo "=== OCORRÊNCIAS EXATAS ==="
 
-          if grep -nE "$OLD_LOG_PATTERN" RandomX/src/wasm_jit.cpp; then
-            echo
-            echo "ERRO: logs antigos encontrados em wasm_jit.cpp!"
-            exit 1
-          else
-            echo "OK: nenhum log antigo encontrado."
-          fi
+          grep -nE \
+            'INICIANDO COMPILE|COMPILE TERMINOU|EXECUTANDO rx_jit|FALHA: execucao do rx_jit|wasmJitReady|JIT ESTA PRONTO' \
+            bin/miner.js
 
           echo
-          echo "--- wasm_jit_runtime.cpp ---"
+          echo "=== CONTEXTO ==="
 
-          if grep -nE "$OLD_LOG_PATTERN" RandomX/src/wasm_jit_runtime.cpp; then
-            echo
-            echo "ERRO: logs antigos encontrados em wasm_jit_runtime.cpp!"
-            exit 1
-          else
-            echo "OK: nenhum log antigo encontrado."
-          fi
+          grep -oE \
+            '.{0,200}(INICIANDO COMPILE|COMPILE TERMINOU|EXECUTANDO rx_jit|FALHA: execucao do rx_jit|wasmJitReady|JIT ESTA PRONTO).{0,300}' \
+            bin/miner.js
+
+          echo
+          echo "=== FONTES DO PROJETO ==="
+
+          grep -RniE \
+            'INICIANDO COMPILE|COMPILE TERMINOU|EXECUTANDO rx_jit|FALHA: execucao do rx_jit|wasmJitReady|JIT ESTA PRONTO' \
+            . \
+            --exclude-dir=.git \
+            --exclude-dir=build \
+            --exclude-dir=build-wasm \
+            --exclude='miner.js' \
+            --exclude='*.a' \
+            --exclude='*.o' \
+            --exclude='*.wasm' \
+            || true
 
           echo
           echo "========================================"
-          echo "OLD LOG CHECK PASSED"
+          echo "DIAGNOSTICO CONCLUIDO"
           echo "========================================"
-          
+
+          exit 1
+
       # ============================================================
       # VERIFY JIT LOCAL LAYOUT
       # ============================================================
