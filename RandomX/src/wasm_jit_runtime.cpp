@@ -8,6 +8,140 @@
 namespace randomx {
 namespace {
 
+/*
+ * Tiny native-WASM arithmetic helper used by the generated RandomX JIT.
+ *
+ * The previous implementation supplied mulh_u64/mulh_s64 as JavaScript
+ * imports using BigInt.  Those calls cross WASM -> JS for every high
+ * multiply and force BigInt arithmetic in the RandomX hot path.
+ *
+ * Keep the helper as a real WebAssembly function instead.  It uses only
+ * baseline i64 operations, so it does not depend on the newer wide-multiply
+ * WASM proposal and remains suitable for browser WASM targets.
+ */
+static const uint8_t kMulhHelperWasm[] = {
+    /* wasm magic + version */
+    0x00,0x61,0x73,0x6d, 0x01,0x00,0x00,0x00,
+
+    /* Type section: (i64,i64)->i64 */
+    0x01,0x08,
+    0x01,
+    0x60,0x02,0x7e,0x7e,0x01,0x7e,
+
+    /* Function section: two functions, both type 0 */
+    0x03,0x03,
+    0x02,0x00,0x00,
+
+    /* Export section */
+    0x07,0x1b,
+    0x02,
+    0x09,0x6d,0x75,0x6c,0x68,0x5f,0x75,0x36,0x34, 0x00,0x00,
+    0x09,0x6d,0x75,0x6c,0x68,0x5f,0x73,0x36,0x34, 0x00,0x01,
+
+    /* Code section */
+    0x0a,0x77,
+    0x02,
+
+    /* ---------------------------------------------------------- */
+    /* func 0: unsigned high 64 bits of a*b                      */
+    /* locals: a0,a1,b0,b1,p0,p1,p2,t  (8 x i64)               */
+    /* ---------------------------------------------------------- */
+    0x0a,0x02,0x00, /* body size = 10 bytes */
+    0x04,            /* four local declarations */
+    0x08,0x7e,       /* 8 x i64 */
+    0x20,0x00,       /* a0 = a & 0xffffffff */
+    0x42,0xff,0xff,0xff,0xff,0x0f,
+    0x83,
+    0x21,0x02,
+    0x20,0x00,       /* a1 = a >> 32 */
+    0x42,0x20,
+    0x87,
+    0x21,0x03,
+    0x20,0x01,       /* b0 */
+    0x42,0xff,0xff,0xff,0xff,0x0f,
+    0x83,
+    0x21,0x04,
+    0x20,0x01,       /* b1 */
+    0x42,0x20,
+    0x87,
+    0x21,0x05,
+    0x20,0x02,       /* p0 = a0*b0 */
+    0x20,0x04,
+    0x7e,
+    0x21,0x06,
+    0x20,0x03,       /* p1 = a1*b0 */
+    0x20,0x04,
+    0x7e,
+    0x21,0x07,
+    0x20,0x02,       /* p2 = a0*b1 */
+    0x20,0x05,
+    0x7e,
+    0x21,0x08,
+    0x20,0x06,       /* t = p0>>32 */
+    0x42,0x20,
+    0x87,
+    0x20,0x07,       /* + low32(p1) */
+    0x42,0xff,0xff,0xff,0xff,0x0f,
+    0x83,
+    0x7c,
+    0x20,0x08,       /* + low32(p2) */
+    0x42,0xff,0xff,0xff,0xff,0x0f,
+    0x83,
+    0x7c,
+    0x21,0x09,
+    0x20,0x07,       /* p3 contribution = (a1*b0)>>32 */
+    0x42,0x20,
+    0x87,
+    0x20,0x08,       /* + (a0*b1)>>32 */
+    0x42,0x20,
+    0x87,
+    0x7c,
+    0x20,0x09,       /* + t>>32 */
+    0x42,0x20,
+    0x87,
+    0x7c,
+    0x20,0x03,       /* + a1*b1 */
+    0x20,0x05,
+    0x7e,
+    0x7c,
+    0x0b,
+
+    /* ---------------------------------------------------------- */
+    /* func 1: signed high 64 bits                               */
+    /* high_s = high_u - (a<0 ? b : 0) - (b<0 ? a : 0)         */
+    /* ---------------------------------------------------------- */
+    0x0a,0x0e,
+    0x00,
+    0x20,0x00,
+    0x20,0x01,
+    0x10,0x00,
+    0x21,0x02,
+    0x20,0x00,
+    0x42,0x3f,
+    0x87,
+    0x42,0x01,
+    0x83,
+    0x20,0x01,
+    0x83,
+    0x7c,
+    0x21,0x03,
+    0x20,0x01,
+    0x42,0x3f,
+    0x87,
+    0x42,0x01,
+    0x83,
+    0x20,0x00,
+    0x83,
+    0x7c,
+    0x21,0x04,
+    0x20,0x02,
+    0x20,0x03,
+    0x7d,
+    0x20,0x04,
+    0x7d,
+    0x0b
+};
+
 EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
                                          int module_size,
                                          int regs_ptr,
@@ -31,6 +165,22 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
             if (!memory) {
                 console.error('[WASM-JIT] wasmMemory indisponivel');
                 return 0;
+            }
+
+            /*
+             * Compile the arithmetic helper once per JS worker.  Its exports
+             * are WASM functions, so calls from rx_jit stay inside the WASM
+             * engine instead of entering JS and BigInt.
+             */
+            let mulh = Module.__randomxMulhHelper;
+            if (!mulh) {
+                const helperModule = new WebAssembly.Module(
+                    new Uint8Array(%HELPER_BYTES%)
+                );
+                const helperInstance = new WebAssembly.Instance(helperModule, {});
+                mulh = helperInstance.exports;
+                Module.__randomxMulhHelper = mulh;
+                console.log('[WASM-JIT] native WASM mulh helper = ACTIVE');
             }
 
             const fpBits = new DataView(new ArrayBuffer(8));
@@ -124,9 +274,8 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
             const instance = new WebAssembly.Instance(wasmModule, {
                 env: {
                     memory: memory,
-                    mulh_u64: (a, b) => BigInt.asUintN(64, (a * b) >> 64n),
-                    mulh_s64: (a, b) => BigInt.asUintN(64,
-                        (BigInt.asIntN(64, a) * BigInt.asIntN(64, b)) >> 64n),
+                    mulh_u64: mulh.mulh_u64,
+                    mulh_s64: mulh.mulh_s64,
                     fp_add: (a, b, mode) => fpBin(a, b, mode, 0),
                     fp_sub: (a, b, mode) => fpBin(a, b, mode, 1),
                     fp_mul: (a, b, mode) => fpBin(a, b, mode, 2),
