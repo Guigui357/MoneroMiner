@@ -178,7 +178,7 @@ static int f_local(int group,
                    int reg,
                    int lane) {
     return 13 +
-           group * 8 +
+           group * 16 +
            reg * 2 +
            lane;
 }
