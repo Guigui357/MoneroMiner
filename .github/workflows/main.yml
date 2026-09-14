@@ -65,6 +65,50 @@ jobs:
           echo "OK: código sem debug"
         fi
 
+    - name: Configure RandomX
+      run: |
+        emcmake cmake -S RandomX -B RandomX/build-wasm \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DRANDOMX_WASM_SIMD=ON \
+          -DRANDOMX_WASM_PTHREADS=ON
+
+    - name: Build RandomX with verbose output
+      run: |
+        cmake --build RandomX/build-wasm --parallel $(nproc) --verbose
+
+    - name: Verify wasm_jit object and static library
+      run: |
+        echo "=== WASM JIT OBJECT ==="
+        JIT_OBJ="RandomX/build-wasm/CMakeFiles/randomx.dir/src/wasm_jit.cpp.o"
+        if [ ! -f "$JIT_OBJ" ]; then
+          echo "ERRO: wasm_jit.cpp.o não foi gerado"
+          find RandomX/build-wasm -name 'wasm_jit.cpp.o' -print
+          exit 1
+        fi
+        ls -lh "$JIT_OBJ"
+        sha256sum "$JIT_OBJ"
+
+        echo "=== LIBRANDOMX ==="
+        LIB="RandomX/build-wasm/librandomx.a"
+        if [ ! -f "$LIB" ]; then
+          echo "ERRO: librandomx.a não foi gerado"
+          exit 1
+        fi
+        ls -lh "$LIB"
+        sha256sum "$LIB"
+
+        echo "=== CHECK OBJECT INSIDE LIBRARY ==="
+        if ar t "$LIB" | grep -Fx 'wasm_jit.cpp.o'; then
+          echo "OK: wasm_jit.cpp.o está dentro do librandomx.a"
+        else
+          echo "ERRO: wasm_jit.cpp.o NÃO está dentro do librandomx.a"
+          ar t "$LIB"
+          exit 1
+        fi
+
+        echo "=== WASM JIT SYMBOLS ==="
+        llvm-nm "$JIT_OBJ" | head -100 || true
+
     - name: Compile Project via Makefile
       run: |
         make distclean
