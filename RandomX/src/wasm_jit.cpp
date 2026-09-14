@@ -718,7 +718,7 @@ bool WasmJit::compile(const Program& program) {
                 zero
             );
 
-            c.push_back(0x7c); // i64.add
+            code.push_back(0x7c); // i64.add
 
             local_set(
                 code,
@@ -744,7 +744,7 @@ bool WasmJit::compile(const Program& program) {
             else
                 local_get(code, 5 + src);
 
-            c.push_back(0x7d); // i64.sub
+            code.push_back(0x7d); // i64.sub
 
             local_set(
                 code,
@@ -783,7 +783,7 @@ bool WasmJit::compile(const Program& program) {
                 zero
             );
 
-            c.push_back(0x7d); // i64.sub
+            code.push_back(0x7d); // i64.sub
 
             local_set(
                 code,
@@ -809,7 +809,7 @@ bool WasmJit::compile(const Program& program) {
             else
                 local_get(code, 5 + src);
 
-            c.push_back(0x7e); // i64.mul
+            code.push_back(0x7e); // i64.mul
 
             local_set(
                 code,
@@ -848,7 +848,7 @@ bool WasmJit::compile(const Program& program) {
                 zero
             );
 
-            c.push_back(0x7e); // i64.mul
+            code.push_back(0x7e); // i64.mul
 
             local_set(
                 code,
@@ -991,7 +991,7 @@ bool WasmJit::compile(const Program& program) {
                     )
                 );
 
-                c.push_back(0x7e); // i64.mul
+                code.push_back(0x7e); // i64.mul
 
                 local_set(
                     code,
@@ -1015,7 +1015,7 @@ bool WasmJit::compile(const Program& program) {
 
             i64_const(code, 0);
 
-            c.push_back(0x7d); // i64.sub
+            code.push_back(0x7d); // i64.sub
 
             local_set(
                 code,
@@ -1041,7 +1041,7 @@ bool WasmJit::compile(const Program& program) {
             else
                 local_get(code, 5 + src);
 
-            c.push_back(0x85); // i64.xor
+            code.push_back(0x85); // i64.xor
 
             local_set(
                 code,
@@ -1080,7 +1080,7 @@ bool WasmJit::compile(const Program& program) {
                 zero
             );
 
-            c.push_back(0x85); // i64.xor
+            code.push_back(0x85); // i64.xor
 
             local_set(
                 code,
@@ -1114,7 +1114,7 @@ bool WasmJit::compile(const Program& program) {
                     5 + src
                 );
 
-            c.push_back(0x88); // i64.rotr
+            code.push_back(0x88); // i64.rotr
 
             local_set(
                 code,
@@ -1148,7 +1148,7 @@ bool WasmJit::compile(const Program& program) {
                     5 + src
                 );
 
-            c.push_back(0x89); // i64.rotl
+            code.push_back(0x89); // i64.rotl
 
             local_set(
                 code,
@@ -1412,7 +1412,7 @@ bool WasmJit::compile(const Program& program) {
                     static_cast<int64_t>(mask)
                 );
 
-                c.push_back(0x85); // i64.xor
+                code.push_back(0x85); // i64.xor
 
                 local_set(
                     code,
@@ -1601,7 +1601,7 @@ bool WasmJit::compile(const Program& program) {
             );
 
             // i64.rotr
-            c.push_back(0x8a);
+            code.push_back(0x8a);
 
             // & 0x3c
             i64_const(
@@ -1610,7 +1610,7 @@ bool WasmJit::compile(const Program& program) {
             );
 
             // i64.and
-            c.push_back(0x83);
+            code.push_back(0x83);
 
             // == 0
             i64_const(
@@ -1619,16 +1619,16 @@ bool WasmJit::compile(const Program& program) {
             );
 
             // i64.eq
-            c.push_back(0x51);
+            code.push_back(0x51);
 
 
             /*
              * if (...)
              */
-            c.push_back(0x04);
+            code.push_back(0x04);
 
             // block type = empty
-            c.push_back(0x40);
+            code.push_back(0x40);
 
 
             /*
@@ -1647,7 +1647,7 @@ bool WasmJit::compile(const Program& program) {
             );
 
             // i64.rotr
-            c.push_back(0x8a);
+            code.push_back(0x8a);
 
             i64_const(
                 code,
@@ -1655,10 +1655,10 @@ bool WasmJit::compile(const Program& program) {
             );
 
             // i64.and
-            c.push_back(0x83);
+            code.push_back(0x83);
 
             // i32.wrap_i64
-            c.push_back(0xa7);
+            code.push_back(0xa7);
 
             // fprc local = 37
             local_set(code, 37);
@@ -1667,7 +1667,7 @@ bool WasmJit::compile(const Program& program) {
             /*
              * end
              */
-            c.push_back(0x0b);
+            code.push_back(0x0b);
         }
 
 
