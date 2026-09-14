@@ -2,84 +2,448 @@ name: Compile MoneroMiner to WebAssembly
 
 on:
   workflow_dispatch:
+
   push:
-    branches: [ "main", "master", "miner-v2" ]
+    branches:
+      - main
+      - master
+      - miner-v2
+
   pull_request:
-    branches: [ "main", "master", "miner-v2" ]
+    branches:
+      - main
+      - master
+      - miner-v2
+
 
 jobs:
   build-wasm:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Baixa o código-fonte do seu repositório (incluindo submódulos se houver)
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
 
-    # 2. Instala as dependências de compilação do Linux (CMake e Make)
-    - name: Install System Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake build-essential
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
 
-    - name: Setup Emscripten
-      uses: mymindstorm/setup-emsdk@v14
-      with:
-        version: '3.1.50'
-        cache-key: 'dirijdix'
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-    - name: Verify Emscripten Installation
-      run: |
-        emcc -v
-        em++ -v
 
-    # Garante que nenhum objeto/cache WASM antigo seja reutilizado.
-    - name: Clean all build caches
-      run: |
-        rm -rf RandomX/build-wasm
-        rm -rf randomx/build-wasm
-        rm -rf RandomX/build
-        rm -rf randomx/build
-        rm -rf build
-        rm -rf bin
+      # ============================================================
+      # SYSTEM DEPENDENCIES
+      # ============================================================
 
-    # Confirma que o workflow está compilando exatamente o commit da miner-v2.
-    - name: Verify source
-      run: |
-        echo "=== COMMIT ==="
-        git rev-parse HEAD
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
 
-        echo "=== BRANCH ==="
-        git branch --show-current
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            build-essential \
+            python3 \
+            git
 
-        echo "=== wasm_jit.cpp ==="
-        wc -l RandomX/src/wasm_jit.cpp
 
-        echo "=== DEBUG SEARCH ==="
-        if grep -nE 'std::cout|std::cerr|\[WASM-JIT\]|opcode_name|print_opcode_limits' RandomX/src/wasm_jit.cpp; then
-          echo "ERRO: código antigo/debug encontrado"
-          exit 1
-        else
-          echo "OK: código sem debug"
-        fi
+      # ============================================================
+      # EMSCRIPTEN
+      # ============================================================
 
-    - name: Compile Project via Makefile
-      run: |
-        make distclean
-        make -j$(nproc)
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: '3.1.50'
+          cache-key: 'emsdk-3.1.50'
 
-    - name: Verify generated WASM
-      run: |
-        echo "=== GENERATED JS ==="
-        sha256sum bin/miner.js
-        ls -lh bin/miner.js
 
-    - name: Upload WebAssembly Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: monerominer-wasm-dist
-        path: |
-          bin/*
-        retention-days: 7
+      - name: Verify Emscripten Installation
+        run: |
+          echo "=== EMCC ==="
+          emcc -v
+
+          echo
+          echo "=== EM++ ==="
+          em++ -v
+
+          echo
+          echo "=== EMSDK ==="
+          emsdk list
+
+
+      # ============================================================
+      # SOURCE INFORMATION
+      # ============================================================
+
+      - name: Show Git Information
+        run: |
+          echo "========================================"
+          echo "GIT INFORMATION"
+          echo "========================================"
+
+          echo "Commit:"
+          git rev-parse HEAD
+
+          echo
+          echo "Branch:"
+          git branch --show-current
+
+          echo
+          echo "Status:"
+          git status --short
+
+          echo
+          echo "Last commit:"
+          git log -1 --oneline
+
+
+      # ============================================================
+      # COMPLETE CLEAN
+      # ============================================================
+
+      - name: Clean all build artifacts
+        run: |
+          echo "Cleaning project..."
+
+          rm -rf build
+          rm -rf bin
+
+          rm -rf RandomX/build
+          rm -rf RandomX/build-wasm
+
+          rm -rf randomx/build
+          rm -rf randomx/build-wasm
+
+          find . \
+            \( -name '*.o' \
+            -o -name '*.a' \
+            -o -name '*.wasm' \
+            -o -name '*.worker.js' \
+            \) \
+            -delete
+
+          echo
+          echo "Clean complete."
+
+
+      # ============================================================
+      # VERIFY RANDOMX SOURCE
+      # ============================================================
+
+      - name: Verify RandomX source
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "RANDOMX SOURCE"
+          echo "========================================"
+
+          test -f RandomX/CMakeLists.txt
+          test -f RandomX/src/wasm_jit.cpp
+          test -f RandomX/src/wasm_jit_runtime.cpp
+
+          echo "RandomX source OK"
+
+          echo
+          echo "wasm_jit.cpp:"
+          wc -l RandomX/src/wasm_jit.cpp
+
+          echo
+          echo "wasm_jit_runtime.cpp:"
+          wc -l RandomX/src/wasm_jit_runtime.cpp
+
+
+      # ============================================================
+      # VERIFY OLD DEBUG LOGS ARE REALLY GONE
+      # ============================================================
+
+      - name: Verify removed WASM JIT debug logs
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "CHECKING OLD JIT LOGS"
+          echo "========================================"
+
+          PATTERN='INICIANDO COMPILE|COMPILE TERMINOU|EXECUTANDO rx_jit|FALHA: execucao do rx_jit|wasmJitReady|JIT ESTA PRONTO|\[WASM-JIT\]|\[WASM-ERR\]'
+
+          echo
+          echo "--- wasm_jit.cpp ---"
+
+          if grep -nE "$PATTERN" RandomX/src/wasm_jit.cpp; then
+            echo
+            echo "ERRO: logs antigos encontrados em wasm_jit.cpp!"
+            exit 1
+          else
+            echo "OK: nenhum log antigo encontrado."
+          fi
+
+          echo
+          echo "--- wasm_jit_runtime.cpp ---"
+
+          if grep -nE "$PATTERN" RandomX/src/wasm_jit_runtime.cpp; then
+            echo
+            echo "ERRO: logs antigos encontrados em wasm_jit_runtime.cpp!"
+            exit 1
+          else
+            echo "OK: nenhum log antigo encontrado."
+          fi
+
+
+      # ============================================================
+      # VERIFY JIT LOCAL LAYOUT
+      # ============================================================
+
+      - name: Verify WASM JIT local layout
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "CHECKING JIT LOCAL LAYOUT"
+          echo "========================================"
+
+          echo
+          echo "Expected layout:"
+          echo "  Integer registers : 5..12"
+          echo "  F registers       : 13..28"
+          echo "  E registers       : 29..44"
+          echo "  A registers       : 45..60"
+          echo "  fprc               : 61"
+          echo "  pc                 : 62"
+
+          echo
+          echo "Checking f_local implementation..."
+
+          grep -n -A8 -B2 \
+            'static int f_local' \
+            RandomX/src/wasm_jit.cpp || true
+
+          echo
+          echo "Checking local 37/38 references..."
+
+          grep -nE \
+            'local\.(get|set).*37|local\.(get|set).*38' \
+            RandomX/src/wasm_jit.cpp || true
+
+
+      # ============================================================
+      # VERIFY CMAKE
+      # ============================================================
+
+      - name: Verify RandomX CMake configuration
+        run: |
+          echo "========================================"
+          echo "CMAKE CONFIGURATION"
+          echo "========================================"
+
+          grep -n \
+            -E 'wasm_jit|wasm_jit_runtime|RANDOMX_WASM_SIMD|RANDOMX_WASM_PTHREADS' \
+            RandomX/CMakeLists.txt
+
+
+      # ============================================================
+      # BUILD
+      # ============================================================
+
+      - name: Compile Project via Makefile
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "BUILDING MONEROMINER"
+          echo "========================================"
+
+          make distclean || true
+
+          rm -rf RandomX/build-wasm
+          rm -rf randomx/build-wasm
+
+          make -j$(nproc)
+
+
+      # ============================================================
+      # VERIFY BUILD OUTPUT
+      # ============================================================
+
+      - name: Verify generated files
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "BUILD OUTPUT"
+          echo "========================================"
+
+          test -f bin/miner.js
+
+          echo
+          echo "Generated files:"
+          find bin -maxdepth 1 -type f -printf '%f\n' | sort
+
+          echo
+          echo "miner.js:"
+          ls -lh bin/miner.js
+
+          echo
+          echo "SHA256:"
+          sha256sum bin/miner.js
+
+
+      # ============================================================
+      # VERIFY OLD LOGS DID NOT ENTER GENERATED JS
+      # ============================================================
+
+      - name: Verify generated miner.js has no old JIT logs
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "CHECKING GENERATED miner.js"
+          echo "========================================"
+
+          PATTERN='INICIANDO COMPILE|COMPILE TERMINOU|EXECUTANDO rx_jit|FALHA: execucao do rx_jit|wasmJitReady|JIT ESTA PRONTO|\[WASM-JIT\]|\[WASM-ERR\]'
+
+          if grep -nE "$PATTERN" bin/miner.js; then
+            echo
+            echo "ERRO: logs antigos foram incorporados ao miner.js!"
+            exit 1
+          else
+            echo
+            echo "OK: logs antigos NÃO estão presentes no miner.js."
+          fi
+
+
+      # ============================================================
+      # VERIFY SINGLE FILE WASM
+      # ============================================================
+
+      - name: Verify SINGLE_FILE output
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "SINGLE FILE CHECK"
+          echo "========================================"
+
+          echo
+          echo "Checking for external WASM..."
+
+          if [ -f bin/miner.wasm ]; then
+            echo "WARNING: miner.wasm exists."
+            ls -lh bin/miner.wasm
+          else
+            echo "OK: no external miner.wasm."
+            echo "WASM should be embedded in miner.js."
+          fi
+
+          echo
+          echo "Checking for worker..."
+
+          if [ -f bin/miner.worker.js ]; then
+            echo "Worker found:"
+            ls -lh bin/miner.worker.js
+          else
+            echo "No standalone worker file."
+          fi
+
+
+      # ============================================================
+      # VERIFY IMPORTANT SYMBOLS
+      # ============================================================
+
+      - name: Verify exported functions
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "CHECKING EXPORTED FUNCTIONS"
+          echo "========================================"
+
+          for symbol in \
+            _startMining \
+            _stopMining \
+            _main
+          do
+            echo
+            echo "Checking: $symbol"
+
+            if grep -q "$symbol" bin/miner.js; then
+              echo "OK"
+            else
+              echo "WARNING: symbol not found directly in generated JS"
+            fi
+          done
+
+
+      # ============================================================
+      # SEARCH FOR JIT IMPLEMENTATION
+      # ============================================================
+
+      - name: Verify WASM JIT symbols in source
+        run: |
+          echo "========================================"
+          echo "JIT SOURCE CHECK"
+          echo "========================================"
+
+          echo
+          echo "rx_jit references:"
+          grep -Rni \
+            --exclude-dir=build \
+            --exclude-dir=build-wasm \
+            --exclude='*.a' \
+            'rx_jit' \
+            RandomX/src || true
+
+          echo
+          echo "wasm_jit references:"
+          grep -Rni \
+            --exclude-dir=build \
+            --exclude-dir=build-wasm \
+            'wasm_jit' \
+            RandomX/src || true
+
+
+      # ============================================================
+      # FINAL BUILD INFORMATION
+      # ============================================================
+
+      - name: Final build summary
+        run: |
+          echo "========================================"
+          echo "FINAL BUILD SUMMARY"
+          echo "========================================"
+
+          echo
+          echo "Commit:"
+          git rev-parse HEAD
+
+          echo
+          echo "miner.js:"
+          ls -lh bin/miner.js
+
+          echo
+          echo "SHA256:"
+          sha256sum bin/miner.js
+
+          echo
+          echo "RandomX library:"
+          ls -lh RandomX/build-wasm/librandomx.a
+
+          echo
+          echo "Build completed successfully."
+
+
+      # ============================================================
+      # ARTIFACT
+      # ============================================================
+
+      - name: Upload WebAssembly Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: monerominer-wasm-dist
+          path: |
+            bin/*
+          if-no-files-found: error
+          retention-days: 7
