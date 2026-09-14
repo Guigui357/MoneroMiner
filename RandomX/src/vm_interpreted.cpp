@@ -41,23 +41,7 @@ namespace randomx {
 		compileProgram(program, bytecode, nreg);
 
 #ifdef __EMSCRIPTEN__
-        std::cout << "[WASM-JIT] =============================" << std::endl;
-        std::cout << "[WASM-JIT] INICIANDO COMPILE" << std::endl;
-
         wasmJitReady = wasmJit.compile(program);
-
-        std::cout << "[WASM-JIT] COMPILE TERMINOU" << std::endl;
-        std::cout << "[WASM-JIT] wasmJitReady = "
-                  << (wasmJitReady ? "TRUE" : "FALSE")
-                  << std::endl;
-
-        if (wasmJitReady) {
-            std::cout << "[WASM-JIT] *** JIT ESTA PRONTO ***" << std::endl;
-        } else {
-            std::cout << "[WASM-JIT] *** JIT NAO ESTA PRONTO ***" << std::endl;
-        }
-
-        std::cout << "[WASM-JIT] =============================" << std::endl;
 #endif
 
 		uint32_t spAddr0 = mem.mx;
@@ -81,13 +65,6 @@ namespace randomx {
 
 #ifdef __EMSCRIPTEN__
 
-        // WASM: FORCAR EXECUCAO PELO WASM-JIT.
-        if (!wasmJitReady) {
-            std::cerr << "[WASM-JIT] ERRO: JIT nao esta pronto!" << std::endl;
-        }
-
-        std::cout << "[WASM-JIT] EXECUTANDO rx_jit..." << std::endl;
-
         const bool jitResult = wasmJit.execute(
             reinterpret_cast<uint8_t*>(nreg.r),
             reinterpret_cast<uint8_t*>(nreg.f),
@@ -97,18 +74,13 @@ namespace randomx {
         );
 
         if (!jitResult) {
-            std::cerr << "[WASM-JIT] FALHA: execucao do rx_jit!" << std::endl;
             return;
         }
-
-        std::cout << "[WASM-JIT] rx_jit executado com sucesso." << std::endl;
-
+			
 #else
-
         executeBytecode(bytecode, scratchpad, config);
 
 #endif
-
 			mem.mx ^= nreg.r[config.readReg2] ^ nreg.r[config.readReg3];
 			mem.mx &= CacheLineAlignMask;
 			datasetPrefetch(datasetOffset + mem.mx);
