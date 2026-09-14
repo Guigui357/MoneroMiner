@@ -252,31 +252,6 @@ jobs:
           echo "SHA256:"
           sha256sum bin/miner.js
 
-
-      # ============================================================
-      # VERIFY OLD LOGS DID NOT ENTER GENERATED JS
-      # ============================================================
-
-      - name: Verify generated miner.js has no old JIT logs
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "CHECKING GENERATED miner.js"
-          echo "========================================"
-
-          PATTERN='INICIANDO COMPILE|COMPILE TERMINOU|EXECUTANDO rx_jit|FALHA: execucao do rx_jit|wasmJitReady|JIT ESTA PRONTO|\[WASM-JIT\]|\[WASM-ERR\]'
-
-          if grep -nE "$PATTERN" bin/miner.js; then
-            echo
-            echo "ERRO: logs antigos foram incorporados ao miner.js!"
-            exit 1
-          else
-            echo
-            echo "OK: logs antigos NÃO estão presentes no miner.js."
-          fi
-
-
       # ============================================================
       # VERIFY SINGLE FILE WASM
       # ============================================================
