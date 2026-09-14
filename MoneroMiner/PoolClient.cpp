@@ -523,23 +523,71 @@ bool submitShare(
     const std::string& nonceHex,
     const std::string& hashHex,
     const std::string& algo
-) {
-    picojson::object obj;
+)
+{
+    (void)algo;
 
-    obj["id"] = picojson::value(jobId);
-    obj["nonce"] = picojson::value(nonceHex);
-    obj["hash"] = picojson::value(hashHex);
-    obj["algo"] = picojson::value(algo);
+    static std::atomic<uint64_t> submitRpcId{2};
+
+    picojson::object params;
+
+    // ID da sessão fornecido pela pool no login.
+    params["id"] =
+        picojson::value(sessionId);
+
+    // Job que originou o share.
+    params["job_id"] =
+        picojson::value(jobId);
+
+    // Nonce encontrado pelo RandomX.
+    params["nonce"] =
+        picojson::value(nonceHex);
+
+    // Hash RandomX de 32 bytes.
+    params["result"] =
+        picojson::value(hashHex);
 
     picojson::object root;
-    root["method"] = picojson::value("submit");
-    root["params"] = picojson::value(obj);
 
-    std::string payload = picojson::value(root).serialize();
+    root["id"] =
+        picojson::value(
+            static_cast<double>(
+                submitRpcId.fetch_add(
+                    1,
+                    std::memory_order_relaxed
+                )
+            )
+        );
+
+    root["jsonrpc"] =
+        picojson::value("2.0");
+
+    root["method"] =
+        picojson::value("submit");
+
+    root["params"] =
+        picojson::value(params);
+
+    std::string payload =
+        picojson::value(root).serialize();
+
+    Utils::threadSafePrint(
+        "[WASM] SHARE -> PROXY: " + payload,
+        true
+    );
 
     std::lock_guard<std::mutex> lock(submitMutex);
 
-    return sendData(payload);
+    bool ok = sendData(payload);
+
+    Utils::threadSafePrint(
+        ok
+            ? "[WASM] SHARE ENVIADO AO PROXY"
+            : "[WASM] FALHA AO ENVIAR SHARE AO PROXY",
+        true
+    );
+
+    return ok;
 }
 
 // ==================================================
