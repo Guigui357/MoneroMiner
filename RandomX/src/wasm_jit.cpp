@@ -683,7 +683,7 @@ bool WasmJit::compile(const Program& program) {
      *   done       depth N+2
      * ------------------------------------------------------------
      */
-    uleb(code, program_size + 2);
+    uleb(code, program_size + 1);
 
     /*
      * ------------------------------------------------------------
@@ -1484,7 +1484,7 @@ bool WasmJit::compile(const Program& program) {
 
             uleb(
                 code,
-                program_size - pc
+                program_size - pc - 1
             );
 
             /*
