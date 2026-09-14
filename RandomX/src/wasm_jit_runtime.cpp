@@ -33,7 +33,7 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
                 return 0;
             }
 
-            /* Native-WASM mulh helper. No JS BigInt is used for integer high multiply. */
+            /* Native-WASM integer high multiply helper. */
             let mulh = Module.__randomxMulhHelper;
             if (!mulh) {
                 const helperBytes = Uint8Array.from(atob(
@@ -44,6 +44,28 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
                 mulh = helperInstance.exports;
                 Module.__randomxMulhHelper = mulh;
                 console.log('[WASM-JIT] native WASM mulh helper = ACTIVE');
+            }
+
+            /*
+             * Native-WASM IEEE-754 arithmetic helper.
+             *
+             * The generated JIT passes the exact binary64 bit pattern as i64.
+             * The helper reinterprets it as f64, executes the hardware/WASM
+             * operation, and returns the resulting binary64 bit pattern.
+             *
+             * Directed RandomX rounding is still handled below, so this
+             * optimization does not silently replace RandomX's fprc semantics.
+             */
+            let fp = Module.__randomxFpHelper;
+            if (!fp) {
+                const fpHelperBytes = Uint8Array.from(atob(
+                    'AGFzbQEAAAABEwNgA35+fwF+YAJ+fwF+YAF/AX4DBwYAAAAAAQIHPQYGZnBfYWRkAAAGZnBfc3ViAAEGZnBfbXVsAAIGZnBfZGl2AAMHZnBfc3FydAAEC2ZwX2Zyb21faTMyAAUKPAYKACAAvyABv6C9CwoAIAC/IAG/ob0LCgAgAL8gAb+ivQsKACAAvyABv6O9CwcAIAC/n70LBgAgALe9Cw=='
+                ), c => c.charCodeAt(0));
+                const fpHelperModule = new WebAssembly.Module(fpHelperBytes);
+                const fpHelperInstance = new WebAssembly.Instance(fpHelperModule, {});
+                fp = fpHelperInstance.exports;
+                Module.__randomxFpHelper = fp;
+                console.log('[WASM-JIT] native WASM FP helper = ACTIVE');
             }
 
             const fpBits = new DataView(new ArrayBuffer(8));
@@ -122,17 +144,17 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
                 }
                 return adjust ? nextBits(nearestBits, adjust) : nearestBits;
             };
+
             const fpBin = (aBits, bBits, mode, op) => {
-                const a = bitsToF64(aBits), b = bitsToF64(bBits);
-                let r;
-                if (op === 0) r = a + b;
-                else if (op === 1) r = a - b;
-                else if (op === 2) r = a * b;
-                else r = a / b;
-                return roundDirected(aBits, bBits, f64ToBits(r), mode | 0, op);
+                let nearestBits;
+                if (op === 0) nearestBits = fp.fp_add(aBits, bBits, 0);
+                else if (op === 1) nearestBits = fp.fp_sub(aBits, bBits, 0);
+                else if (op === 2) nearestBits = fp.fp_mul(aBits, bBits, 0);
+                else nearestBits = fp.fp_div(aBits, bBits, 0);
+                return roundDirected(aBits, bBits, nearestBits, mode | 0, op);
             };
-            const fpSqrt = (aBits, mode) => f64ToBits(Math.sqrt(bitsToF64(aBits)));
-            const fpFromI32 = (value) => f64ToBits(Number(value | 0));
+            const fpSqrt = (aBits, mode) => fp.fp_sqrt(aBits, mode | 0);
+            const fpFromI32 = (value) => fp.fp_from_i32(value | 0);
 
             const instance = new WebAssembly.Instance(wasmModule, {
                 env: {
