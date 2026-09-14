@@ -3,9 +3,9 @@ name: Compile MoneroMiner to WebAssembly
 on:
   workflow_dispatch:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "miner-v2" ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "miner-v2" ]
 
 jobs:
   build-wasm:
