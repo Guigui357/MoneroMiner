@@ -155,51 +155,6 @@ jobs:
           echo "wasm_jit_runtime.cpp:"
           wc -l RandomX/src/wasm_jit_runtime.cpp
 
-
-      - name: Diagnose old JIT logs in generated miner.js
-        run: |
-          set +e
-
-          echo "========================================"
-          echo "DIAGNOSTICANDO LOGS ANTIGOS NO miner.js"
-          echo "========================================"
-
-          echo
-          echo "=== OCORRÊNCIAS EXATAS ==="
-
-          grep -nE \
-            'INICIANDO COMPILE|COMPILE TERMINOU|EXECUTANDO rx_jit|FALHA: execucao do rx_jit|wasmJitReady|JIT ESTA PRONTO' \
-            bin/miner.js
-
-          echo
-          echo "=== CONTEXTO ==="
-
-          grep -oE \
-            '.{0,200}(INICIANDO COMPILE|COMPILE TERMINOU|EXECUTANDO rx_jit|FALHA: execucao do rx_jit|wasmJitReady|JIT ESTA PRONTO).{0,300}' \
-            bin/miner.js
-
-          echo
-          echo "=== FONTES DO PROJETO ==="
-
-          grep -RniE \
-            'INICIANDO COMPILE|COMPILE TERMINOU|EXECUTANDO rx_jit|FALHA: execucao do rx_jit|wasmJitReady|JIT ESTA PRONTO' \
-            . \
-            --exclude-dir=.git \
-            --exclude-dir=build \
-            --exclude-dir=build-wasm \
-            --exclude='miner.js' \
-            --exclude='*.a' \
-            --exclude='*.o' \
-            --exclude='*.wasm' \
-            || true
-
-          echo
-          echo "========================================"
-          echo "DIAGNOSTICO CONCLUIDO"
-          echo "========================================"
-
-          exit 1
-
       # ============================================================
       # VERIFY JIT LOCAL LAYOUT
       # ============================================================
