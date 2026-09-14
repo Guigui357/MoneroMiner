@@ -672,14 +672,14 @@ bool WasmJit::compile(const Program& program) {
                 )
             );
 
-            c.push_back(0x86); // i64.shl
+            code.push_back(0x86); // i64.shl
 
             if (dst == RegisterNeedsDisplacement) {
                 i64_const(code, simm);
-                c.push_back(0x7c); // i64.add
+                code.push_back(0x7c); // i64.add
             }
 
-            c.push_back(0x7c); // i64.add
+            code.push_back(0x7c); // i64.add
 
             local_set(
                 code,
