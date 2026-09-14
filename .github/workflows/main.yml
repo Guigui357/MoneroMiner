@@ -30,20 +30,52 @@ jobs:
         version: '3.1.50'
         cache-key: 'dirijdix'
 
-    # 4. Executa a checagem das versões para garantir que o emcc está ativo
     - name: Verify Emscripten Installation
       run: |
         emcc -v
         em++ -v
 
-    # 5. Roda o comando Make usando o seu Makefile reestruturado para WebAssembly
+    # Garante que nenhum objeto/cache WASM antigo seja reutilizado.
+    - name: Clean all build caches
+      run: |
+        rm -rf RandomX/build-wasm
+        rm -rf randomx/build-wasm
+        rm -rf RandomX/build
+        rm -rf randomx/build
+        rm -rf build
+        rm -rf bin
+
+    # Confirma que o workflow está compilando exatamente o commit da miner-v2.
+    - name: Verify source
+      run: |
+        echo "=== COMMIT ==="
+        git rev-parse HEAD
+
+        echo "=== BRANCH ==="
+        git branch --show-current
+
+        echo "=== wasm_jit.cpp ==="
+        wc -l RandomX/src/wasm_jit.cpp
+
+        echo "=== DEBUG SEARCH ==="
+        if grep -nE 'std::cout|std::cerr|\[WASM-JIT\]|opcode_name|print_opcode_limits' RandomX/src/wasm_jit.cpp; then
+          echo "ERRO: código antigo/debug encontrado"
+          exit 1
+        else
+          echo "OK: código sem debug"
+        fi
+
     - name: Compile Project via Makefile
       run: |
         make distclean
-        make -j$(nproc) 
-        
+        make -j$(nproc)
 
-    # 6. Salva os arquivos miner.js e miner.wasm gerados para você baixar no painel do GitHub
+    - name: Verify generated WASM
+      run: |
+        echo "=== GENERATED WASM ==="
+        sha256sum bin/miner.wasm
+        ls -lh bin/miner.wasm
+
     - name: Upload WebAssembly Artifacts
       uses: actions/upload-artifact@v4
       with:
