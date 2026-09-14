@@ -329,20 +329,8 @@ static const char* opcode_name(uint32_t op) {
 }
 
 static bool validate_opcode(uint32_t op,
-                            uint32_t pc) {
-    if (op > 255u) {
-        std::cout
-            << "[WASM-JIT] INVALID OPCODE"
-            << " pc=" << pc
-            << " opcode=" << op
-            << " (0x" << std::hex << op << std::dec << ")"
-            << " -- impossible uint8_t value"
-            << std::endl;
-
-        return false;
-    }
-
-    return true;
+                            uint32_t) {
+    return op <= 255u;
 }
 
 static void print_opcode_limits() {
@@ -480,19 +468,6 @@ bool WasmJit::compile(const Program& program) {
             return false;
 
         if (!supported(ins)) {
-            std::cout
-                << "[WASM-JIT] UNSUPPORTED"
-                << " pc=" << pc
-                << " opcode=" << op
-                << " (0x"
-                << std::hex
-                << op
-                << std::dec
-                << ")"
-                << " instruction="
-                << opcode_name(op)
-                << std::endl;
-
             return false;
         }
     }
