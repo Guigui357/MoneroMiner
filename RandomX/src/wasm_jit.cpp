@@ -548,7 +548,7 @@ bool WasmJit::compile(const Program& program) {
      * ------------------------------------------------------------
      */
     i32_const(code, 0);
-    local_set(code, 37);
+    local_set(code, 61);
 
     /*
      * ------------------------------------------------------------
@@ -556,87 +556,153 @@ bool WasmJit::compile(const Program& program) {
      * ------------------------------------------------------------
      */
     i32_const(code, 0);
-    local_set(code, 38);
+    local_set(code, 62);
 
     /*
      * ------------------------------------------------------------
-     * RANDOMX DISPATCHER
+     * RANDOMX THREADED WASM DISPATCHER
      *
-     * WASM structured control flow cannot directly jump to an
-     * arbitrary instruction emitted earlier.
+     * Uses a WASM br_table instead of:
      *
-     * Therefore the JIT uses:
+     *     if (pc == 0)
+     *     if (pc == 1)
+     *     if (pc == 2)
+     *     ...
      *
-     *     pc
-     *     block $done
-     *       loop $dispatch
+     * Structure:
      *
-     *          if (pc == program_size)
-     *              br $done
+     *   block $done
+     *     loop $dispatch
      *
-     *          if (pc == 0)
-     *              instruction 0
-     *              br $dispatch
+     *       block $caseN
+     *         ...
+     *           block $case1
+     *             block $case0
+     *               local.get $pc
+     *               br_table $case0 ... $caseN $done
      *
-     *          if (pc == 1)
-     *              instruction 1
-     *              br $dispatch
+     *             instruction 0
+     *             br $dispatch
      *
-     *          ...
+     *           instruction 1
+     *           br $dispatch
      *
-     *       end
+     *         ...
+     *
+     *       instruction N
+     *       br $dispatch
+     *
      *     end
+     *   end
      *
-     * This implements real RandomX control flow. It is intentionally
-     * correctness-first; a later optimized version can replace this
-     * with a br_table/threaded dispatcher.
+     * case i is selected directly by the value of pc.
      * ------------------------------------------------------------
      */
 
     /*
-     * block $done
+     * $done
      */
     code.push_back(0x02);
     code.push_back(0x40);
 
     /*
-     * loop $dispatch
+     * $dispatch
      */
     code.push_back(0x03);
     code.push_back(0x40);
 
     /*
-     * if (pc == program_size)
+     * ------------------------------------------------------------
+     * Create N nested case blocks.
      *
-     * Nesting while inside:
+     * The innermost block is case 0.
      *
-     *   if
-     *     br 2
-     *   end
+     * Therefore:
      *
-     * depth 0 = if
-     * depth 1 = loop
-     * depth 2 = done block
+     *   case 0 -> branch depth 0
+     *   case 1 -> branch depth 1
+     *   ...
+     *   case N -> branch depth N
+     *
+     * The default target is $done.
+     * ------------------------------------------------------------
      */
-    local_get(code, 38);
-    i32_const(
-        code,
-        static_cast<int32_t>(program_size)
-    );
+    for (uint32_t i = 0;
+         i < program_size;
+         ++i) {
 
-    code.push_back(0x46); // i32.eq
-
-    code.push_back(0x04); // if
-    code.push_back(0x40); // empty block type
-
-    code.push_back(0x0c); // br
-    uleb(code, 2);
-
-    code.push_back(0x0b); // end if
+        code.push_back(0x02);
+        code.push_back(0x40);
+    }
 
     /*
      * ------------------------------------------------------------
-     * Emit every RandomX instruction behind a pc comparison.
+     * pc -> br_table
+     * ------------------------------------------------------------
+     */
+    local_get(code, 62);
+
+    /*
+     * br_table
+     */
+    code.push_back(0x0e);
+
+    /*
+     * Number of explicit targets.
+     */
+    uleb(code, program_size);
+
+    /*
+     * case 0 ... case N
+     */
+    for (uint32_t i = 0;
+         i < program_size;
+         ++i) {
+
+        /*
+         * Because case blocks are nested:
+         *
+         * case 0 = depth 0
+         * case 1 = depth 1
+         * ...
+         */
+        uleb(code, i);
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * Default target = $done
+     *
+     * Current nesting:
+     *
+     *   case0      depth 0
+     *   case1      depth 1
+     *   ...
+     *   caseN      depth N
+     *   dispatch   depth N+1
+     *   done       depth N+2
+     * ------------------------------------------------------------
+     */
+    uleb(code, program_size + 2);
+
+    /*
+     * ------------------------------------------------------------
+     * Emit instruction bodies.
+     *
+     * IMPORTANT:
+     *
+     * The blocks are closed one at a time before the next
+     * instruction body.
+     *
+     * Therefore:
+     *
+     *   end case0
+     *   instruction 0
+     *
+     *   end case1
+     *   instruction 1
+     *
+     *   ...
      * ------------------------------------------------------------
      */
     for (uint32_t pc = 0;
@@ -647,7 +713,7 @@ bool WasmJit::compile(const Program& program) {
             program(static_cast<int>(pc));
 
         const int op =
-            ins.opcode;
+            static_cast<int>(ins.opcode);
 
         const int dst =
             reg(ins.dst);
@@ -669,25 +735,22 @@ bool WasmJit::compile(const Program& program) {
             );
 
         /*
-         * if (pc == this instruction)
+         * --------------------------------------------------------
+         * Close the current case block.
+         *
+         * For pc=0 this closes case0.
+         * For pc=1 this closes case1.
+         * etc.
+         * --------------------------------------------------------
          */
-        local_get(code, 38);
-
-        i32_const(
-            code,
-            static_cast<int32_t>(pc)
-        );
-
-        code.push_back(0x46); // i32.eq
-
-        code.push_back(0x04); // if
-        code.push_back(0x40); // empty block type
+        code.push_back(0x0b);
 
         /*
          * --------------------------------------------------------
-         * IADD_RS
+         * REAL RANDOMX INSTRUCTION
          * --------------------------------------------------------
          */
+
         if (op < ceil_IADD_RS) {
 
             local_get(code, 5 + dst);
@@ -709,23 +772,12 @@ bool WasmJit::compile(const Program& program) {
 
             code.push_back(0x7c); // i64.add
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * IADD_M
-         * --------------------------------------------------------
-         */
         else if (op < ceil_IADD_M) {
 
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             const bool zero =
                 src == dst;
@@ -745,50 +797,28 @@ bool WasmJit::compile(const Program& program) {
                 zero
             );
 
-            code.push_back(0x7c); // i64.add
+            code.push_back(0x7c);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * ISUB_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_ISUB_R) {
 
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             if (src == dst)
                 i64_const(code, simm);
             else
                 local_get(code, 5 + src);
 
-            code.push_back(0x7d); // i64.sub
+            code.push_back(0x7d);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * ISUB_M
-         * --------------------------------------------------------
-         */
         else if (op < ceil_ISUB_M) {
 
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             const bool zero =
                 src == dst;
@@ -808,50 +838,28 @@ bool WasmJit::compile(const Program& program) {
                 zero
             );
 
-            code.push_back(0x7d); // i64.sub
+            code.push_back(0x7d);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * IMUL_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_IMUL_R) {
 
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             if (src == dst)
                 i64_const(code, simm);
             else
                 local_get(code, 5 + src);
 
-            code.push_back(0x7e); // i64.mul
+            code.push_back(0x7e);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * IMUL_M
-         * --------------------------------------------------------
-         */
         else if (op < ceil_IMUL_M) {
 
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             const bool zero =
                 src == dst;
@@ -871,19 +879,11 @@ bool WasmJit::compile(const Program& program) {
                 zero
             );
 
-            code.push_back(0x7e); // i64.mul
+            code.push_back(0x7e);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * IMULH_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_IMULH_R) {
 
             local_get(code, 5 + dst);
@@ -891,17 +891,9 @@ bool WasmJit::compile(const Program& program) {
 
             emit_call(code, 0);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * IMULH_M
-         * --------------------------------------------------------
-         */
         else if (op < ceil_IMULH_M) {
 
             local_get(code, 5 + dst);
@@ -926,17 +918,9 @@ bool WasmJit::compile(const Program& program) {
 
             emit_call(code, 0);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * ISMULH_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_ISMULH_R) {
 
             local_get(code, 5 + dst);
@@ -944,17 +928,9 @@ bool WasmJit::compile(const Program& program) {
 
             emit_call(code, 1);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * ISMULH_M
-         * --------------------------------------------------------
-         */
         else if (op < ceil_ISMULH_M) {
 
             local_get(code, 5 + dst);
@@ -979,17 +955,9 @@ bool WasmJit::compile(const Program& program) {
 
             emit_call(code, 1);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * IMUL_RCP
-         * --------------------------------------------------------
-         */
         else if (op < ceil_IMUL_RCP) {
 
             const uint32_t divisor =
@@ -997,10 +965,7 @@ bool WasmJit::compile(const Program& program) {
 
             if (!isZeroOrPowerOf2(divisor)) {
 
-                local_get(
-                    code,
-                    5 + dst
-                );
+                local_get(code, 5 + dst);
 
                 i64_const(
                     code,
@@ -1009,73 +974,40 @@ bool WasmJit::compile(const Program& program) {
                     )
                 );
 
-                code.push_back(0x7e); // i64.mul
+                code.push_back(0x7e);
 
-                local_set(
-                    code,
-                    5 + dst
-                );
+                local_set(code, 5 + dst);
             }
         }
 
-        /*
-         * --------------------------------------------------------
-         * INEG_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_INEG_R) {
 
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             i64_const(code, 0);
 
-            code.push_back(0x7d); // i64.sub
+            code.push_back(0x7d);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * IXOR_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_IXOR_R) {
 
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             if (src == dst)
                 i64_const(code, simm);
             else
                 local_get(code, 5 + src);
 
-            code.push_back(0x85); // i64.xor
+            code.push_back(0x85);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * IXOR_M
-         * --------------------------------------------------------
-         */
         else if (op < ceil_IXOR_M) {
 
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             const bool zero =
                 src == dst;
@@ -1095,25 +1027,14 @@ bool WasmJit::compile(const Program& program) {
                 zero
             );
 
-            code.push_back(0x85); // i64.xor
+            code.push_back(0x85);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * IROR_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_IROR_R) {
 
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             if (src == dst)
                 i64_const(
@@ -1123,30 +1044,16 @@ bool WasmJit::compile(const Program& program) {
                     )
                 );
             else
-                local_get(
-                    code,
-                    5 + src
-                );
+                local_get(code, 5 + src);
 
-            code.push_back(0x88); // i64.rotr
+            code.push_back(0x88);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * IROL_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_IROL_R) {
 
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             if (src == dst)
                 i64_const(
@@ -1156,55 +1063,25 @@ bool WasmJit::compile(const Program& program) {
                     )
                 );
             else
-                local_get(
-                    code,
-                    5 + src
-                );
+                local_get(code, 5 + src);
 
-            code.push_back(0x89); // i64.rotl
+            code.push_back(0x89);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
         }
 
-        /*
-         * --------------------------------------------------------
-         * ISWAP_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_ISWAP_R) {
 
             if (src != dst) {
 
-                local_get(
-                    code,
-                    5 + dst
-                );
+                local_get(code, 5 + dst);
+                local_get(code, 5 + src);
 
-                local_get(
-                    code,
-                    5 + src
-                );
-
-                local_set(
-                    code,
-                    5 + dst
-                );
-
-                local_set(
-                    code,
-                    5 + src
-                );
+                local_set(code, 5 + dst);
+                local_set(code, 5 + src);
             }
         }
 
-        /*
-         * --------------------------------------------------------
-         * FSWAP_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_FSWAP_R) {
 
             const int group =
@@ -1234,11 +1111,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-        /*
-         * --------------------------------------------------------
-         * FADD_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_FADD_R) {
 
             emit_fp_bin(
@@ -1246,7 +1118,7 @@ bool WasmJit::compile(const Program& program) {
                 2,
                 f_local(0, fdst, 0),
                 f_local(2, fsrc, 0),
-                37
+                61
             );
 
             local_set(
@@ -1259,7 +1131,7 @@ bool WasmJit::compile(const Program& program) {
                 2,
                 f_local(0, fdst, 1),
                 f_local(2, fsrc, 1),
-                37
+                61
             );
 
             local_set(
@@ -1268,11 +1140,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-        /*
-         * --------------------------------------------------------
-         * FADD_M
-         * --------------------------------------------------------
-         */
         else if (op < ceil_FADD_M) {
 
             const bool zero =
@@ -1303,7 +1170,7 @@ bool WasmJit::compile(const Program& program) {
                     static_cast<uint32_t>(lane)
                 );
 
-                local_get(code, 37);
+                local_get(code, 61);
 
                 emit_call(code, 2);
 
@@ -1314,11 +1181,6 @@ bool WasmJit::compile(const Program& program) {
             }
         }
 
-        /*
-         * --------------------------------------------------------
-         * FSUB_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_FSUB_R) {
 
             emit_fp_bin(
@@ -1326,7 +1188,7 @@ bool WasmJit::compile(const Program& program) {
                 3,
                 f_local(0, fdst, 0),
                 f_local(2, fsrc, 0),
-                37
+                61
             );
 
             local_set(
@@ -1339,7 +1201,7 @@ bool WasmJit::compile(const Program& program) {
                 3,
                 f_local(0, fdst, 1),
                 f_local(2, fsrc, 1),
-                37
+                61
             );
 
             local_set(
@@ -1348,11 +1210,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-        /*
-         * --------------------------------------------------------
-         * FSUB_M
-         * --------------------------------------------------------
-         */
         else if (op < ceil_FSUB_M) {
 
             const bool zero =
@@ -1383,7 +1240,7 @@ bool WasmJit::compile(const Program& program) {
                     static_cast<uint32_t>(lane)
                 );
 
-                local_get(code, 37);
+                local_get(code, 61);
 
                 emit_call(code, 3);
 
@@ -1394,11 +1251,6 @@ bool WasmJit::compile(const Program& program) {
             }
         }
 
-        /*
-         * --------------------------------------------------------
-         * FSCAL_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_FSCAL_R) {
 
             const uint64_t mask =
@@ -1418,7 +1270,7 @@ bool WasmJit::compile(const Program& program) {
                     static_cast<int64_t>(mask)
                 );
 
-                code.push_back(0x85); // i64.xor
+                code.push_back(0x85);
 
                 local_set(
                     code,
@@ -1427,11 +1279,6 @@ bool WasmJit::compile(const Program& program) {
             }
         }
 
-        /*
-         * --------------------------------------------------------
-         * FMUL_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_FMUL_R) {
 
             emit_fp_bin(
@@ -1439,7 +1286,7 @@ bool WasmJit::compile(const Program& program) {
                 4,
                 f_local(1, fdst, 0),
                 f_local(2, fsrc, 0),
-                37
+                61
             );
 
             local_set(
@@ -1452,7 +1299,7 @@ bool WasmJit::compile(const Program& program) {
                 4,
                 f_local(1, fdst, 1),
                 f_local(2, fsrc, 1),
-                37
+                61
             );
 
             local_set(
@@ -1461,11 +1308,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-        /*
-         * --------------------------------------------------------
-         * FDIV_M
-         * --------------------------------------------------------
-         */
         else if (op < ceil_FDIV_M) {
 
             const bool zero =
@@ -1496,7 +1338,7 @@ bool WasmJit::compile(const Program& program) {
                     static_cast<uint32_t>(lane)
                 );
 
-                local_get(code, 37);
+                local_get(code, 61);
 
                 emit_call(code, 5);
 
@@ -1507,18 +1349,13 @@ bool WasmJit::compile(const Program& program) {
             }
         }
 
-        /*
-         * --------------------------------------------------------
-         * FSQRT_R
-         * --------------------------------------------------------
-         */
         else if (op < ceil_FSQRT_R) {
 
             emit_fp_sqrt(
                 code,
                 6,
                 f_local(1, fdst, 0),
-                37
+                61
             );
 
             local_set(
@@ -1530,7 +1367,7 @@ bool WasmJit::compile(const Program& program) {
                 code,
                 6,
                 f_local(1, fdst, 1),
-                37
+                61
             );
 
             local_set(
@@ -1539,31 +1376,6 @@ bool WasmJit::compile(const Program& program) {
             );
         }
 
-        /*
-         * --------------------------------------------------------
-         * CBRANCH
-         *
-         * RandomX semantics:
-         *
-         *   dst = dst + cimm
-         *
-         * where:
-         *
-         *   cimm = sign_extended(imm32)
-         *          | (1 << (modcond + JumpOffset))
-         *
-         * then:
-         *
-         *   clear bit (b - 1)
-         *
-         * and branch when:
-         *
-         *   (dst & condition_mask) == 0
-         *
-         * The target was calculated before code generation using
-         * RandomX's register modification tracking.
-         * --------------------------------------------------------
-         */
         else if (op < ceil_CBRANCH) {
 
             const uint32_t shift =
@@ -1572,9 +1384,6 @@ bool WasmJit::compile(const Program& program) {
                 ) +
                 RANDOMX_JUMP_OFFSET;
 
-            /*
-             * sign-extended imm32
-             */
             const uint64_t signed_imm =
                 static_cast<uint64_t>(
                     static_cast<int64_t>(
@@ -1584,12 +1393,6 @@ bool WasmJit::compile(const Program& program) {
                     )
                 );
 
-            /*
-             * RandomX CBRANCH:
-             *
-             *   cimm |= 1 << shift
-             *   cimm &= ~(1 << (shift - 1))
-             */
             uint64_t cimm =
                 signed_imm |
                 (uint64_t(1) << shift);
@@ -1599,17 +1402,6 @@ bool WasmJit::compile(const Program& program) {
                     ~(uint64_t(1) << (shift - 1));
             }
 
-            /*
-             * ConditionMask_Calculated << modcond
-             *
-             * Default:
-             *
-             *   JumpBits = 8
-             *
-             * therefore:
-             *
-             *   ((1 << 8) - 1) << shift
-             */
             const uint64_t condition_mask =
                 ((uint64_t(1) << RANDOMX_JUMP_BITS) - 1ULL)
                 << shift;
@@ -1617,47 +1409,32 @@ bool WasmJit::compile(const Program& program) {
             /*
              * dst += cimm
              */
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             i64_const(
                 code,
                 static_cast<int64_t>(cimm)
             );
 
-            code.push_back(0x7c); // i64.add
+            code.push_back(0x7c);
 
-            local_set(
-                code,
-                5 + dst
-            );
+            local_set(code, 5 + dst);
 
             /*
-             * Default:
-             *
-             *     pc = pc + 1
-             *
-             * This is the not-taken path.
+             * Default = pc + 1.
              */
-            local_get(code, 38);
+            local_get(code, 62);
 
             i32_const(code, 1);
 
-            code.push_back(0x6a); // i32.add
+            code.push_back(0x6a);
 
-            local_set(code, 38);
+            local_set(code, 62);
 
             /*
-             * Test:
-             *
-             *     (dst & condition_mask) == 0
+             * Test condition.
              */
-            local_get(
-                code,
-                5 + dst
-            );
+            local_get(code, 5 + dst);
 
             i64_const(
                 code,
@@ -1666,16 +1443,14 @@ bool WasmJit::compile(const Program& program) {
                 )
             );
 
-            code.push_back(0x83); // i64.and
+            code.push_back(0x83);
 
             i64_const(code, 0);
 
-            code.push_back(0x51); // i64.eq
+            code.push_back(0x51);
 
             /*
-             * if condition is true:
-             *
-             *     pc = branch_target[pc]
+             * Taken branch.
              */
             code.push_back(0x04);
             code.push_back(0x40);
@@ -1687,115 +1462,82 @@ bool WasmJit::compile(const Program& program) {
                 )
             );
 
-            local_set(
-                code,
-                38
-            );
+            local_set(code, 62);
 
             code.push_back(0x0b);
 
             /*
-             * CBRANCH has already selected the next pc.
+             * Return directly to $dispatch.
              *
-             * Jump directly back to dispatch.
+             * At this point:
              *
-             * Current nesting:
+             *   case pc+1 ... case N
+             *   loop
              *
-             *   if(pc == ...)
-             *       br 1 -> loop
+             * are open, plus the CBRANCH if has already ended.
+             *
+             * Depth to loop:
+             *
+             *   program_size - pc
              */
             code.push_back(0x0c);
-            uleb(code, 1);
+
+            uleb(
+                code,
+                program_size - pc
+            );
 
             /*
-             * The following generic pc increment is therefore
-             * unreachable for the CBRANCH runtime path.
+             * No generic pc++ and no second dispatch branch.
              */
+            continue;
         }
 
-        /*
-         * --------------------------------------------------------
-         * CFROUND
-         * --------------------------------------------------------
-         */
         else if (op < ceil_CFROUND) {
 
             const uint32_t rotate =
                 ins.getImm32() & 63u;
 
-            /*
-             * Build:
-             *
-             *   (ROTR64(src, rotate) & 0x3c) == 0
-             */
-            local_get(
-                code,
-                5 + src
-            );
+            local_get(code, 5 + src);
 
             i64_const(
                 code,
                 static_cast<int64_t>(rotate)
             );
 
-            code.push_back(0x8a); // i64.rotr
+            code.push_back(0x8a);
 
-            i64_const(
-                code,
-                0x3c
-            );
+            i64_const(code, 0x3c);
 
-            code.push_back(0x83); // i64.and
+            code.push_back(0x83);
 
-            i64_const(
-                code,
-                0
-            );
+            i64_const(code, 0);
 
-            code.push_back(0x51); // i64.eq
+            code.push_back(0x51);
 
-            /*
-             * if(...)
-             */
             code.push_back(0x04);
             code.push_back(0x40);
 
-            /*
-             * fprc =
-             *
-             *     ROTR64(src, rotate) & 3
-             */
-            local_get(
-                code,
-                5 + src
-            );
+            local_get(code, 5 + src);
 
             i64_const(
                 code,
                 static_cast<int64_t>(rotate)
             );
 
-            code.push_back(0x8a); // i64.rotr
+            code.push_back(0x8a);
 
-            i64_const(
-                code,
-                3
-            );
+            i64_const(code, 3);
 
-            code.push_back(0x83); // i64.and
+            code.push_back(0x83);
 
-            code.push_back(0xa7); // i32.wrap_i64
+            code.push_back(0xa7);
 
-            local_set(code, 37);
+            local_set(code, 61);
 
             code.push_back(0x0b);
         }
 
-        /*
-         * --------------------------------------------------------
-         * ISTORE
-         * --------------------------------------------------------
-         */
         else if (op < ceil_ISTORE) {
 
             const uint32_t mask =
@@ -1813,74 +1555,78 @@ bool WasmJit::compile(const Program& program) {
                 false
             );
 
-            local_get(
-                code,
-                5 + src
-            );
+            local_get(code, 5 + src);
 
             i64_store(code);
         }
 
-        /*
-         * --------------------------------------------------------
-         * NOP
-         * --------------------------------------------------------
-         */
         else if (op < ceil_NOP) {
-            // Nothing.
+            /*
+             * NOP
+             */
         }
 
         /*
          * --------------------------------------------------------
-         * Normal instruction completion.
+         * Generic sequential advance.
          *
-         * CBRANCH already emitted br 1 above.
-         *
-         * Every other instruction advances:
-         *
-         *     pc++
-         *
-         * and returns to the dispatch loop.
+         * CBRANCH used `continue`, so it never reaches here.
          * --------------------------------------------------------
          */
-        local_get(code, 38);
+        local_get(code, 62);
 
         i32_const(code, 1);
 
-        code.push_back(0x6a); // i32.add
+        code.push_back(0x6a);
 
-        local_set(code, 38);
+        local_set(code, 62);
 
         /*
-         * Leave this instruction's if and go to dispatch loop.
+         * --------------------------------------------------------
+         * Return to $dispatch.
          *
-         * Current nesting:
+         * At instruction pc:
          *
-         *   if(pc == ...)
-         *       br 1
+         *   case pc+1 ... case N = program_size - pc - 1
          *
-         * depth 0 = if
-         * depth 1 = loop
+         * plus:
+         *
+         *   loop
+         *
+         * Therefore:
+         *
+         *   depth = program_size - pc
+         * --------------------------------------------------------
          */
         code.push_back(0x0c);
-        uleb(code, 1);
 
-        /*
-         * end if(pc == ...)
-         */
-        code.push_back(0x0b);
+        uleb(
+            code,
+            program_size - pc
+        );
     }
 
     /*
-     * End dispatch loop.
+     * ------------------------------------------------------------
+     * Close the remaining case block(s).
+     *
+     * The last instruction body is inside the outermost case
+     * structure. We need to close the remaining nested blocks
+     * before closing the dispatch loop.
+     *
+     * ------------------------------------------------------------
+     */
+
+    /*
+     * Close $dispatch.
      */
     code.push_back(0x0b);
 
     /*
-     * End done block.
+     * Close $done.
      */
     code.push_back(0x0b);
-
+    
     /*
      * ------------------------------------------------------------
      * Store integer registers
