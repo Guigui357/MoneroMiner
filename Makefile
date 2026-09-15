@@ -76,23 +76,9 @@ randomx:
 			-DRANDOMX_WASM_PTHREADS=ON
 	@cmake --build "$(RANDOMX_BUILD)" -j$(shell nproc)
 
-# RandomXManager.cpp historically forced LIGHT mode whenever __EMSCRIPTEN__
-# was defined. For this one translation unit, build a Fast-mode variant
-# instead of replacing the full source file. Other WASM sources keep their
-# normal __EMSCRIPTEN__ definition.
 $(BUILD_DIR)/RandomXManager.o: $(SRC_DIR)/RandomXManager.cpp
 	@echo "Compiling RandomXManager in RANDOMX FAST/FULL_MEM mode..."
-	@mkdir -p $(BUILD_DIR)/fast
-	@sed \
-		-e 's/^#ifdef __EMSCRIPTEN__$$/#if defined(__EMSCRIPTEN__) \&\& !defined(RANDOMX_WASM_FAST)/' \
-		-e 's/^#ifndef __EMSCRIPTEN__$$/#if !defined(__EMSCRIPTEN__) || defined(RANDOMX_WASM_FAST)/' \
-		-e 's/detectedFlags & ~RANDOMX_FLAG_FULL_MEM/detectedFlags \& ~(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_JIT)/' \
-		-e 's/flags = detectedFlags |/flags = (detectedFlags \& ~RANDOMX_FLAG_JIT) |/' \
-		-e 's/^    flags |= RANDOMX_FLAG_JIT;$$/    \/\/ JIT disabled in WASM Fast mode; use interpreted FULL_MEM VM./' \
-		-e 's/^    cacheAllocFlags |= RANDOMX_FLAG_JIT;$$/    \/\/ JIT disabled in WASM Fast mode; use interpreted FULL_MEM cache./' \
-		-e 's/saveDataset(datasetFileName);/\/\/ Dataset is intentionally not duplicated into browser MEMFS./' \
-		$(SRC_DIR)/RandomXManager.cpp > $(BUILD_DIR)/fast/RandomXManager.cpp
-	$(CXX) $(CXXFLAGS) -DRANDOMX_WASM_FAST $(INCLUDES) -c $(BUILD_DIR)/fast/RandomXManager.cpp -o $@
+	$(CXX) $(CXXFLAGS) -DRANDOMX_WASM_FAST $(INCLUDES) -c $< -o $@
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@echo "Compiling optimized WebAssembly Object $<..."
