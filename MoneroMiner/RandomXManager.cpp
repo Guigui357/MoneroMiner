@@ -561,11 +561,11 @@ bool RandomXManager::createDataset()
             startIndex;
 
         threads.emplace_back(
-            [this, threadStart, count]()
+            [threadStart, count]()
             {
                 randomx_init_dataset(
-                    dataset,
-                    cache,
+                    RandomXManager::dataset,
+                    RandomXManager::cache,
                     threadStart,
                     count
                 );
