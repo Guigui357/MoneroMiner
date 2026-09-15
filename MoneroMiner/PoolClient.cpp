@@ -248,7 +248,7 @@ EM_BOOL on_ws_message(
     // ==================================================
     // LOGIN RESPONSE
     // ==================================================
-
+    
     auto resultIt = obj.find("result");
 
     if (resultIt != obj.end() &&
@@ -256,6 +256,21 @@ EM_BOOL on_ws_message(
     {
         picojson::object result =
             resultIt->second.get<picojson::object>();
+
+        // Captura o SESSION ID enviado pelo pool
+        auto idIt = result.find("id");
+
+        if (idIt != result.end() &&
+            idIt->second.is<std::string>())
+        {
+            sessionId =
+                idIt->second.get<std::string>();
+
+            Utils::threadSafePrint(
+                "[WASM] Session ID: " + sessionId,
+                true
+            );
+        }
 
         auto statusIt = result.find("status");
 
@@ -279,7 +294,6 @@ EM_BOOL on_ws_message(
             }
         }
     }
-
 
     // ==================================================
     // JOB
