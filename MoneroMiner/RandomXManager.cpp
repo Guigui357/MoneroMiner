@@ -308,16 +308,14 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
     return true;
 }
 
-
 // ============================================================
 // CREATE DATASET
 // ============================================================
-
 bool RandomXManager::createDataset()
 {
 #ifdef __EMSCRIPTEN__
-
 #ifndef RANDOMX_WASM_FAST
+
     Utils::threadSafePrint(
         "[WASM] createDataset() ignorado: usando LIGHT MODE",
         true
@@ -326,169 +324,185 @@ bool RandomXManager::createDataset()
     return false;
 
 #endif
+#endif
 
-    // Dataset de ~2 GB não deve ser criado no WASM.
-    Utils::threadSafePrint(
-        "[WASM] createDataset() ignorado: usando LIGHT MODE",
-        true
-    );
-
-    return false;
-
-#else
-
-    if (!cache)
-    {
+    if (!cache) {
         Utils::threadSafePrint(
-            "Cannot create dataset: no cache",
+            "[RandomX] ERRO: cache não inicializado",
             true
         );
-
         return false;
     }
 
-    if (dataset)
-    {
+    // Release previous dataset if one exists.
+    if (dataset) {
+        Utils::threadSafePrint(
+            "[RandomX] Liberando dataset anterior...",
+            true
+        );
+
         randomx_release_dataset(dataset);
         dataset = nullptr;
     }
 
     Utils::threadSafePrint(
-        "Allocating dataset with flags: 0x"
-        +
-        Utils::formatHex(
-            static_cast<uint64_t>(flags),
-            8
-        ),
+        "[RandomX] Alocando dataset FULL_MEM...",
         true
     );
 
-    dataset =
-        randomx_alloc_dataset(
-            static_cast<randomx_flags>(flags)
-        );
+    dataset = randomx_alloc_dataset(flags);
 
-    if (!dataset)
-    {
+    if (!dataset) {
         Utils::threadSafePrint(
-            "Dataset allocation failed, trying FULL_MEM only",
+            "[RandomX] Falha ao alocar dataset com flags atuais",
             true
         );
 
+#ifdef __EMSCRIPTEN__
+        Utils::threadSafePrint(
+            "[WASM] Falha ao alocar dataset de ~2.08 GiB",
+            true
+        );
+#else
+        // Desktop fallback.
         flags = RANDOMX_FLAG_FULL_MEM;
 
-        dataset =
-            randomx_alloc_dataset(
-                RANDOMX_FLAG_FULL_MEM
-            );
+        Utils::threadSafePrint(
+            "[RandomX] Tentando novamente com RANDOMX_FLAG_FULL_MEM...",
+            true
+        );
 
-        if (!dataset)
-        {
+        dataset = randomx_alloc_dataset(flags);
+
+        if (!dataset) {
             Utils::threadSafePrint(
-                "Dataset allocation failed",
+                "[RandomX] Falha ao alocar dataset FULL_MEM",
                 true
             );
-
             return false;
         }
+#endif
     }
 
-    unsigned long itemCount =
-        randomx_dataset_item_count();
+    const uint64_t itemCount = randomx_dataset_item_count();
 
     Utils::threadSafePrint(
-        "Initializing "
-        +
-        std::to_string(itemCount)
-        +
-        " dataset items...",
+        "[RandomX] Dataset items: " +
+        std::to_string(itemCount),
         true
     );
+
+#ifdef __EMSCRIPTEN__
+
+    Utils::threadSafePrint(
+        "[WASM] Inicializando dataset RandomX FULL_MEM...",
+        true
+    );
+
+    const unsigned int hardwareThreads =
+        std::thread::hardware_concurrency();
+
+    unsigned int numThreads =
+        hardwareThreads > 1 ? hardwareThreads - 1 : 1;
+
+    if (numThreads > 8) {
+        numThreads = 8;
+    }
+
+    Utils::threadSafePrint(
+        "[WASM] Threads para inicialização do dataset: " +
+        std::to_string(numThreads),
+        true
+    );
+
+#else
 
     unsigned int numThreads =
         std::thread::hardware_concurrency();
 
-    if (numThreads == 0)
+    if (numThreads == 0) {
         numThreads = 1;
+    }
 
-    // Reserve one logical CPU for system responsiveness
-    if (numThreads > 1)
-        numThreads =
-            (std::max)(1u, numThreads - 1u);
+    if (numThreads > 1) {
+        numThreads--;
+    }
 
-    Utils::threadSafePrint(
-        "Using "
-        +
-        std::to_string(numThreads)
-        +
-        " threads for dataset initialization "
-        "(leaving 1 for system)",
-        true
-    );
-
-    auto start =
-        std::chrono::high_resolution_clock::now();
+#endif
 
     std::vector<std::thread> threads;
+    threads.reserve(numThreads);
 
-    unsigned long itemsPerThread =
+    const uint64_t itemsPerThread =
         itemCount / numThreads;
 
-    for (unsigned int t = 0;
-         t < numThreads;
-         t++)
-    {
-        unsigned long startIndex =
-            t * itemsPerThread;
+    const uint64_t remainder =
+        itemCount % numThreads;
 
-        unsigned long count =
-            (t == numThreads - 1)
-            ?
-            (itemCount - startIndex)
-            :
-            itemsPerThread;
+    auto startTime = std::chrono::steady_clock::now();
+
+    uint64_t startIndex = 0;
+
+    for (unsigned int i = 0; i < numThreads; ++i) {
+
+        const uint64_t count =
+            itemsPerThread +
+            (i < remainder ? 1 : 0);
+
+        const uint64_t threadStart = startIndex;
 
         threads.emplace_back(
-            [startIndex, count]()
-            {
+            [this, threadStart, count]() {
+
                 randomx_init_dataset(
                     dataset,
                     cache,
-                    startIndex,
+                    threadStart,
                     count
                 );
             }
         );
+
+        startIndex += count;
     }
 
-    for (auto& thread : threads)
-    {
+    for (auto& thread : threads) {
         thread.join();
     }
 
-    auto end =
-        std::chrono::high_resolution_clock::now();
+    const auto endTime = std::chrono::steady_clock::now();
 
-    auto duration =
-        std::chrono::duration_cast<
-            std::chrono::milliseconds
-        >(end - start);
-
-    double seconds =
-        duration.count() / 1000.0;
+    const double elapsed =
+        std::chrono::duration<double>(endTime - startTime).count();
 
     Utils::threadSafePrint(
-        "Dataset initialized in "
-        +
-        std::to_string(seconds)
-        +
-        " seconds",
+        "[RandomX] Dataset inicializado em " +
+        std::to_string(elapsed) +
+        " segundos",
         true
     );
 
-    return true;
+    if (!dataset) {
+        Utils::threadSafePrint(
+            "[RandomX] ERRO: dataset ficou nulo após inicialização",
+            true
+        );
+        return false;
+    }
 
+#ifdef __EMSCRIPTEN__
+    Utils::threadSafePrint(
+        "[WASM] Dataset FULL_MEM pronto",
+        true
+    );
+#else
+    Utils::threadSafePrint(
+        "[RandomX] Dataset FULL_MEM pronto",
+        true
+    );
 #endif
+
+    return true;
 }
 
 
