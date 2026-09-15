@@ -167,14 +167,49 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
 
 #ifdef __EMSCRIPTEN__
 
-    useLightMode = true;
+#ifdef RANDOMX_WASM_FAST
 
-    // WASM não utiliza dataset FULL_MEM.
-    // Também não utiliza LARGE_PAGES.
-    //
-    // Mantemos o cache em modo LIGHT.
+    // ========================================================
+    // WASM FAST / FULL_MEM
+    // ========================================================
+
+    useLightMode = false;
+
+    // Cache continua sem JIT no navegador.
     cacheAllocFlags = RANDOMX_FLAG_DEFAULT;
 
+    // A VM e o dataset usam FULL_MEM.
+    flags = RANDOMX_FLAG_FULL_MEM;
+
+    Utils::threadSafePrint(
+        "[WASM] RandomX FAST MODE",
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] FULL_MEM ativado",
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] LARGE_PAGES desativado",
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] JIT desativado para compatibilidade",
+        true
+    );
+
+#else
+
+    // ========================================================
+    // WASM LIGHT
+    // ========================================================
+
+    useLightMode = true;
+
+    cacheAllocFlags = RANDOMX_FLAG_DEFAULT;
     flags = RANDOMX_FLAG_DEFAULT;
 
     Utils::threadSafePrint(
@@ -197,45 +232,9 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
         true
     );
 
-#else
-
-    // ========================================================
-    // DESKTOP
-    // ========================================================
-
-    useLightMode = false;
-
-    cacheAllocFlags =
-        detectedFlags &
-        ~RANDOMX_FLAG_FULL_MEM;
-
-    flags =
-        detectedFlags |
-        RANDOMX_FLAG_FULL_MEM;
-
-    flags |= RANDOMX_FLAG_JIT;
-
-    cacheAllocFlags |= RANDOMX_FLAG_JIT;
-
-    if (Platform::hasHugePagesSupport())
-    {
-        flags |= RANDOMX_FLAG_LARGE_PAGES;
-        cacheAllocFlags |= RANDOMX_FLAG_LARGE_PAGES;
-
-        Utils::threadSafePrint(
-            "[RandomX] Large pages habilitadas",
-            true
-        );
-    }
-    else
-    {
-        Utils::threadSafePrint(
-            "[RandomX] Large pages indisponíveis",
-            true
-        );
-    }
-
 #endif
+
+#else
 
     // ========================================================
     // Liberar cache anterior
@@ -317,6 +316,16 @@ bool RandomXManager::initializeCache(const std::string& seedHash)
 bool RandomXManager::createDataset()
 {
 #ifdef __EMSCRIPTEN__
+
+#ifndef RANDOMX_WASM_FAST
+    Utils::threadSafePrint(
+        "[WASM] createDataset() ignorado: usando LIGHT MODE",
+        true
+    );
+
+    return false;
+
+#endif
 
     // Dataset de ~2 GB não deve ser criado no WASM.
     Utils::threadSafePrint(
@@ -564,6 +573,63 @@ bool RandomXManager::initialize(
 
 #ifdef __EMSCRIPTEN__
 
+#ifdef RANDOMX_WASM_FAST
+
+    // ========================================================
+    // WASM FAST
+    // ========================================================
+
+    useLightMode = false;
+    flags = RANDOMX_FLAG_FULL_MEM;
+
+    Utils::threadSafePrint(
+        "[WASM] RANDOMX FAST MODE",
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] FULL_MEM ativado",
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] Criando dataset RandomX (~2.08 GiB)...",
+        true
+    );
+
+    if (!createDataset())
+    {
+        Utils::threadSafePrint(
+            "[WASM] ERRO CRÍTICO: dataset FULL_MEM não pôde ser criado",
+            true
+        );
+
+        initialized = false;
+        return false;
+    }
+
+    if (dataset == nullptr)
+    {
+        Utils::threadSafePrint(
+            "[WASM] ERRO CRÍTICO: createDataset() retornou sem dataset",
+            true
+        );
+
+        initialized = false;
+        return false;
+    }
+
+    Utils::threadSafePrint(
+        "[WASM] Dataset FULL_MEM pronto",
+        true
+    );
+
+#else
+
+    // ========================================================
+    // WASM LIGHT
+    // ========================================================
+
     useLightMode = true;
     flags = RANDOMX_FLAG_DEFAULT;
 
@@ -576,6 +642,8 @@ bool RandomXManager::initialize(
         "[WASM] Dataset não será criado",
         true
     );
+
+#endif
 
 #else
 
@@ -716,14 +784,112 @@ bool RandomXManager::createVM(int threadId)
 
 #ifdef __EMSCRIPTEN__
 
+#ifdef RANDOMX_WASM_FAST
+
     // ========================================================
-    // WASM
-    //
-    // LIGHT MODE
-    // SEM DATASET
-    // SEM FULL_MEM
-    // SEM LARGE_PAGES
-    // SEM JIT
+    // WASM FAST / FULL_MEM
+    // ========================================================
+
+    if (dataset == nullptr)
+    {
+        Utils::threadSafePrint(
+            "[WASM] ERRO: FULL_MEM requer dataset",
+            true
+        );
+
+        return false;
+    }
+
+    randomx_flags wasmFlags =
+        RANDOMX_FLAG_FULL_MEM;
+
+    // JIT deliberadamente não utilizado no WASM.
+    wasmFlags = static_cast<randomx_flags>(
+        wasmFlags & ~RANDOMX_FLAG_JIT
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] Criando VM FAST para thread "
+        +
+        std::to_string(threadId),
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] VM flags: 0x"
+        +
+        Utils::formatHex(
+            static_cast<uint64_t>(wasmFlags),
+            8
+        ),
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] Cache: "
+        +
+        std::string(
+            cache != nullptr
+            ?
+            "OK"
+            :
+            "NULL"
+        ),
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] Dataset: "
+        +
+        std::string(
+            dataset != nullptr
+            ?
+            "VALID"
+            :
+            "NULL"
+        ),
+        true
+    );
+
+    Utils::threadSafePrint(
+        "[WASM] Chamando randomx_create_vm() FULL_MEM...",
+        true
+    );
+
+    randomx_vm* vm =
+        randomx_create_vm(
+            wasmFlags,
+            cache,
+            dataset
+        );
+
+    if (vm == nullptr)
+    {
+        Utils::threadSafePrint(
+            "[WASM] ERRO: randomx_create_vm() FULL_MEM "
+            "retornou nullptr",
+            true
+        );
+
+        return false;
+    }
+
+    vms[threadId] = vm;
+
+    Utils::threadSafePrint(
+        "[WASM] VM FAST/FULL_MEM criada com sucesso "
+        "para thread "
+        +
+        std::to_string(threadId),
+        true
+    );
+
+    return true;
+
+#else
+
+    // ========================================================
+    // WASM LIGHT
     // ========================================================
 
     randomx_flags wasmFlags =
@@ -764,11 +930,6 @@ bool RandomXManager::createVM(int threadId)
         true
     );
 
-    Utils::threadSafePrint(
-        "[WASM] Chamando randomx_create_vm()...",
-        true
-    );
-
     randomx_vm* vm =
         randomx_create_vm(
             wasmFlags,
@@ -799,51 +960,9 @@ bool RandomXManager::createVM(int threadId)
 
     return true;
 
-#else
-
-    // ========================================================
-    // DESKTOP
-    // ========================================================
-
-    if (
-        !useLightMode &&
-        dataset == nullptr
-    )
-    {
-        Utils::threadSafePrint(
-            "Cannot create VM: dataset required for full mode",
-            true
-        );
-
-        return false;
-    }
-
-    randomx_vm* vm =
-        randomx_create_vm(
-            static_cast<randomx_flags>(flags),
-            cache,
-            useLightMode
-                ?
-                nullptr
-                :
-                dataset
-        );
-
-    if (vm == nullptr)
-    {
-        Utils::threadSafePrint(
-            "VM creation failed",
-            true
-        );
-
-        return false;
-    }
-
-    vms[threadId] = vm;
-
-    return true;
-
 #endif
+
+#else
 }
 
 
