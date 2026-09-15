@@ -108,43 +108,33 @@ bool MiningThreadData::calculateHashAndCheckTarget(
     if (hashOut.size() < RANDOMX_HASH_SIZE)
         hashOut.resize(RANDOMX_HASH_SIZE);
 
-    // randomx_calculate_hash() writes the complete output buffer, so clearing
-    // it before every hash is unnecessary work on the hot path.
+    // RandomX writes the complete 32-byte result.
     randomx_calculate_hash(vm, blob.data(), blob.size(), hashOut.data());
 
     totalHashes++;
 
-    // uint256_t accepts the same little-endian representation as RandomX's
-    // 32-byte result. Build the target directly from its four existing words;
-    // no temporary 32-byte vector/allocation is needed per nonce.
-    std::array<uint64_t, 4> hashWords{};
-    for (size_t i = 0; i < 4; ++i) {
-        uint64_t word = 0;
-        for (size_t j = 0; j < 8; ++j) {
-            word |= static_cast<uint64_t>(hashOut[i * 8 + j]) << (j * 8);
-        }
-        hashWords[i] = word;
+    // XMRig's RandomX share validation uses the high uint64 of the 32-byte
+    // result. The Stratum target is likewise represented as a uint64.
+    uint64_t hashHigh = 0;
+    for (size_t j = 0; j < 8; ++j) {
+        hashHigh |= static_cast<uint64_t>(hashOut[24 + j]) << (j * 8);
     }
 
-    bool isValid = false;
-    for (int i = 3; i >= 0; --i) {
-        if (hashWords[static_cast<size_t>(i)] < targetWords[static_cast<size_t>(i)]) {
-            isValid = true;
-            break;
-        }
-        if (hashWords[static_cast<size_t>(i)] > targetWords[static_cast<size_t>(i)]) {
-            break;
-        }
-    }
+    const uint64_t targetHigh = targetWords[3];
+    const bool isValid = targetHigh != 0 && hashHigh <= targetHigh;
 
     if (config.debugMode && (isValid || (totalHashes % 10000 == 0))) {
         uint256_t hashValue;
-        hashValue.data = hashWords;
+        hashValue.data = {0, 0, 0, hashHigh};
         uint256_t targetValue;
-        targetValue.data = targetWords;
+        targetValue.data = {0, 0, 0, targetHigh};
 
         std::stringstream ss;
         ss << "[T" << threadId << " PoW @ " << totalHashes << " hashes]\n";
+        ss << "  HashHigh:   0x" << std::hex << std::setw(16)
+           << std::setfill('0') << hashHigh << "\n";
+        ss << "  TargetHigh: 0x" << std::hex << std::setw(16)
+           << std::setfill('0') << targetHigh << "\n";
         ss << "  Hash:   " << hashValue.toHex() << "\n";
         ss << "  Target: " << targetValue.toHex() << "\n";
         ss << "  Result: " << (isValid ? "VALID SHARE FOUND!" : "does not meet target");
@@ -171,8 +161,9 @@ bool MiningThreadData::calculateHashAndCheckTarget(
     std::array<uint64_t, 4> targetWords{};
     for (size_t i = 0; i < 4; ++i) {
         uint64_t word = 0;
-        for (size_t j = 0; j < 8; ++j)
+        for (size_t j = 0; j < 8; ++j) {
             word |= static_cast<uint64_t>(targetBytes[i * 8 + j]) << (j * 8);
+        }
         targetWords[i] = word;
     }
 
