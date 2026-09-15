@@ -15,7 +15,7 @@ CFLAGS = -O3 -flto -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 EMSCRIPTEN_FLAGS = \
     -s WASM=1 \
     -s USE_PTHREADS=1 \
-    -s PTHREAD_POOL_SIZE=6 \
+    -s PTHREAD_POOL_SIZE=16 \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s INITIAL_MEMORY=268435456 \
     -s MAXIMUM_MEMORY=3221225472 \
@@ -90,7 +90,7 @@ $(BUILD_DIR)/RandomXManager.o: $(SRC_DIR)/RandomXManager.cpp
 		-e 's/flags = detectedFlags |/flags = (detectedFlags \& ~RANDOMX_FLAG_JIT) |/' \
 		-e 's/^    flags |= RANDOMX_FLAG_JIT;$$/    \/\/ JIT disabled in WASM Fast mode; use interpreted FULL_MEM VM./' \
 		-e 's/^    cacheAllocFlags |= RANDOMX_FLAG_JIT;$$/    \/\/ JIT disabled in WASM Fast mode; use interpreted FULL_MEM cache./' \
-		-e 's/^                saveDataset(datasetFileName);$$/                \/\/ Do not duplicate the ~2.08 GiB dataset into MEMFS in the browser./' \
+		-e 's/saveDataset(datasetFileName);/\/\/ Dataset is intentionally not duplicated into browser MEMFS./' \
 		$(SRC_DIR)/RandomXManager.cpp > $(BUILD_DIR)/fast/RandomXManager.cpp
 	$(CXX) $(CXXFLAGS) -DRANDOMX_WASM_FAST $(INCLUDES) -c $(BUILD_DIR)/fast/RandomXManager.cpp -o $@
 
@@ -120,7 +120,7 @@ info:
 	@echo "Compiler: $(CXX)"
 	@echo "Output Target: $(TARGET)"
 	@echo "Pthreads: enabled"
-	@echo "Pthread pool: 6"
+	@echo "Pthread pool: 16"
 	@echo "LTO: enabled"
 	@echo "WASM SIMD: enabled"
 	@echo "RandomX mode: FAST / FULL_MEM (~2.08 GiB dataset)"
