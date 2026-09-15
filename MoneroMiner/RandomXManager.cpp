@@ -963,6 +963,50 @@ bool RandomXManager::createVM(int threadId)
 #endif
 
 #else
+
+    // ========================================================
+    // DESKTOP
+    // ========================================================
+
+    if (
+        !useLightMode &&
+        dataset == nullptr
+    )
+    {
+        Utils::threadSafePrint(
+            "Cannot create VM: dataset required for full mode",
+            true
+        );
+
+        return false;
+    }
+
+    randomx_vm* vm =
+        randomx_create_vm(
+            static_cast<randomx_flags>(flags),
+            cache,
+            useLightMode
+                ?
+                nullptr
+                :
+                dataset
+        );
+
+    if (vm == nullptr)
+    {
+        Utils::threadSafePrint(
+            "VM creation failed",
+            true
+        );
+
+        return false;
+    }
+
+    vms[threadId] = vm;
+
+    return true;
+
+#endif
 }
 
 
@@ -1061,7 +1105,7 @@ bool RandomXManager::loadDataset(
 #ifdef __EMSCRIPTEN__
 
     Utils::threadSafePrint(
-        "[WASM] loadDataset() ignorado",
+        "[WASM] loadDataset() não utilizado no Fast WASM",
         true
     );
 
@@ -1283,19 +1327,11 @@ void RandomXManager::cleanup()
         cache = nullptr;
     }
 
-#ifndef __EMSCRIPTEN__
-
     if (dataset)
     {
         randomx_release_dataset(dataset);
         dataset = nullptr;
     }
-
-#else
-
-    dataset = nullptr;
-
-#endif
 
     initialized = false;
 
