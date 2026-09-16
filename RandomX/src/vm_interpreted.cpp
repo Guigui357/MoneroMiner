@@ -15,7 +15,21 @@ All rights reserved.
 #include "intrin_portable.h"
 #include "reciprocal.h"
 
+#ifdef __EMSCRIPTEN__
+#include <atomic>
+#endif
+
 namespace randomx {
+
+#ifdef __EMSCRIPTEN__
+namespace {
+// All mining workers create their own InterpretedVm. A per-VM disable flag
+// therefore still produces one failure for every worker/program. Keep the
+// fail-safe process-wide so the first runtime failure disables the broken
+// generated module for all workers and prevents repeated WebKit traps/logs.
+std::atomic<bool> wasmJitGloballyDisabled{false};
+}
+#endif
 
 	template<class Allocator, bool softAes>
 	void InterpretedVm<Allocator, softAes>::setDataset(randomx_dataset* dataset) {
@@ -41,30 +55,25 @@ namespace randomx {
 		compileProgram(program, bytecode, nreg);
 
 #ifdef __EMSCRIPTEN__
-        // The custom WASM JIT is independent of RANDOMX_FLAG_JIT.
-        // RANDOMX_FLAG_JIT refers to the native x86/ARM JIT and must
-        // remain disabled on WebAssembly. The generated WASM module
-        // executes the RandomX program directly against this register file.
-        if (!wasmJitDisabled) {
+        // RANDOMX_FLAG_JIT is the native x86/ARM JIT. The custom generated
+        // WebAssembly JIT is separate and does not use that flag.
+        if (!wasmJitGloballyDisabled.load(std::memory_order_acquire)) {
             wasmJitReady = wasmJit.compile(program);
             if (!wasmJitReady) {
-                wasmJitDisabled = true;
-                std::cerr << "[WASM-JIT] compile failed; disabling JIT and using interpreter" << std::endl;
+                wasmJitGloballyDisabled.store(true, std::memory_order_release);
+                std::cerr << "[WASM-ERR] [WASM-JIT] compile failed; disabling JIT globally and using interpreter" << std::endl;
             }
             else {
                 std::cerr << "[WASM-JIT] custom JIT ready; hashing through generated WASM" << std::endl;
             }
         }
+        else {
+            wasmJitReady = false;
+        }
 #endif
 
 		uint32_t spAddr0 = mem.mx;
 		uint32_t spAddr1 = mem.ma;
-
-#ifdef __EMSCRIPTEN__
-        // Once a generated module fails at runtime, never enter it again
-        // for this VM. This prevents repeated WebAssembly traps on mobile.
-        const bool wasmJitUsable = wasmJitReady && !wasmJitDisabled;
-#endif
 
 		for(unsigned ic = 0; ic < RANDOMX_PROGRAM_ITERATIONS; ++ic) {
 			uint64_t spMix = nreg.r[config.readReg0] ^ nreg.r[config.readReg1];
@@ -83,10 +92,9 @@ namespace randomx {
 				nreg.e[i] = maskRegisterExponentMantissa(config, rx_cvt_packed_int_vec_f128(scratchpad + spAddr1 + 8 * (RegisterCountFlt + i)));
 
 #ifdef __EMSCRIPTEN__
-
         bool executed = false;
 
-        if (wasmJitUsable) {
+        if (wasmJitReady && !wasmJitGloballyDisabled.load(std::memory_order_acquire)) {
             executed = wasmJit.execute(
                 reinterpret_cast<uint8_t*>(nreg.r),
                 reinterpret_cast<uint8_t*>(nreg.f),
@@ -96,10 +104,9 @@ namespace randomx {
             );
 
             if (!executed) {
-                // Disable permanently for this VM. The interpreter remains
-                // the correctness-preserving fallback for the current hash.
-                wasmJitDisabled = true;
-                std::cerr << "[WASM-JIT] execution failed; disabling JIT for this VM and using interpreter" << std::endl;
+                wasmJitReady = false;
+                wasmJitGloballyDisabled.store(true, std::memory_order_release);
+                std::cerr << "[WASM-ERR] [WASM-JIT] execution failed; disabling JIT globally and using interpreter" << std::endl;
             }
         }
 
