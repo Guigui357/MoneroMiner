@@ -4,10 +4,11 @@
 CXX = em++
 CC = emcc
 
-
-# RandomX Fast mode needs the full dataset (~2.08 GiB). The old 2 GiB
-# Emscripten ceiling was too small once the dataset and the rest of the heap
-# were combined, so allow a 3 GiB wasm32 heap.
+# RandomX FULL_MEM requires a contiguous ~2.08 GiB dataset. On iPhone/iOS
+# WebKit, web-content memory limits make that mode unsuitable. Keep WASM
+# builds in LIGHT mode by default; FULL_MEM can still be explicitly requested
+# for a desktop/browser environment with enough memory using:
+#   make RANDOMX_WASM_FAST=1
 # Optimize both the miner and RandomX. LTO lets LLVM optimize across the
 # MoneroMiner/RandomX boundary; SIMD is required by the browser build.
 CXXFLAGS = -std=c++17 -O3 -flto -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
@@ -79,8 +80,8 @@ randomx:
 	@cmake --build "$(RANDOMX_BUILD)" -j$(shell nproc)
 
 $(BUILD_DIR)/RandomXManager.o: $(SRC_DIR)/RandomXManager.cpp
-	@echo "Compiling RandomXManager in RANDOMX FAST/FULL_MEM mode..."
-	$(CXX) $(CXXFLAGS) -DRANDOMX_WASM_FAST $(INCLUDES) -c $< -o $@
+	@echo "Compiling RandomXManager in RANDOMX WASM mode..."
+	$(CXX) $(CXXFLAGS) $(if $(RANDOMX_WASM_FAST),-DRANDOMX_WASM_FAST,) $(INCLUDES) -c $< -o $@
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@echo "Compiling optimized WebAssembly Object $<..."
@@ -108,10 +109,11 @@ info:
 	@echo "Compiler: $(CXX)"
 	@echo "Output Target: $(TARGET)"
 	@echo "Pthreads: enabled"
-	@echo "Pthread pool: 16"
+	@echo "Pthread pool: 6"
 	@echo "LTO: enabled"
 	@echo "WASM SIMD: enabled"
-	@echo "RandomX mode: FAST / FULL_MEM (~2.08 GiB dataset)"
-	@echo "WASM maximum memory: 3 GiB"
+	@echo "RandomX mode: LIGHT (default)"
+	@echo "RandomX FULL_MEM override: make RANDOMX_WASM_FAST=1"
+	@echo "WASM maximum memory: 4 GiB"
 
 .PHONY: all directories randomx clean distclean rebuild info
