@@ -16,15 +16,66 @@ modification, are permitted provided that the following conditions are met:
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+
+#if defined(__EMSCRIPTEN__) || defined(RANDOMX_WASM)
+
+#include <stdlib.h>
+#include "virtual_memory.h"
+
+/*
+ * WebAssembly does not provide native virtual memory mappings like mmap(2),
+ * and mprotect() cannot be used to manage the RandomX dataset/JIT buffers.
+ * Emscripten's linear memory is the backing store, so use the C allocator.
+ */
+void* allocMemoryPages(size_t bytes) {
+	return malloc(bytes);
+}
+
+static inline int pageProtect(void* ptr, size_t bytes, int rules, char **errfunc) {
+	(void)ptr;
+	(void)bytes;
+	(void)rules;
+	if (errfunc)
+		*errfunc = NULL;
+	return 0;
+}
+
+void setPagesRW(void* ptr, size_t bytes) {
+	(void)ptr;
+	(void)bytes;
+}
+
+void setPagesRX(void* ptr, size_t bytes) {
+	(void)ptr;
+	(void)bytes;
+}
+
+void setPagesRWX(void* ptr, size_t bytes) {
+	(void)ptr;
+	(void)bytes;
+}
+
+void* allocLargePagesMemory(size_t bytes) {
+	/* Emscripten has no native huge-page API. Use the same linear-memory
+	 * allocator as normal RandomX pages. */
+	return malloc(bytes);
+}
+
+void freePagedMemory(void* ptr, size_t bytes) {
+	(void)bytes;
+	free(ptr);
+}
+
+#else
 
 #if defined(_WIN32) || defined(__CYGWIN__)
 #include <windows.h>
@@ -58,18 +109,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #if defined(USE_PTHREAD_JIT_WP) && defined(MAC_OS_VERSION_11_0) \
 	&& MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_VERSION_11_0
 static int MacOSchecked, MacOSver;
-/* This function is used implicitly by clang's __builtin_available() checker.
- * When cross-compiling, the library containing this function doesn't exist,
- * and linking will fail because the symbol is unresolved. The function here
- * is a quick and dirty hack to get close enough to identify MacOSX 11.0.
- */
 static int32_t __isOSVersionAtLeast(int32_t major, int32_t minor, int32_t subminor) {
+	(void)subminor;
 	if (!MacOSchecked) {
-	    struct utsname ut;
+		struct utsname ut;
 		int mmaj, mmin;
 		uname(&ut);
 		sscanf(ut.release, "%d.%d", &mmaj, &mmin);
-		// The utsname release version is 9 greater than the canonical OS version
 		mmaj -= 9;
 		MacOSver = (mmaj << 8) | mmin;
 		MacOSchecked = 1;
@@ -78,41 +124,29 @@ static int32_t __isOSVersionAtLeast(int32_t major, int32_t minor, int32_t submin
 }
 #endif
 
-
 #if defined(_WIN32) || defined(__CYGWIN__)
 #define Fail(func)	do  {*errfunc = func; return GetLastError();} while(0)
 int setPrivilege(const char* pszPrivilege, BOOL bEnable, char **errfunc) {
-	HANDLE           hToken;
+	HANDLE hToken;
 	TOKEN_PRIVILEGES tp;
-	BOOL             status;
-	DWORD            error = 0;
-
+	BOOL status;
+	DWORD error = 0;
 	*errfunc = NULL;
-
 	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
 		Fail("OpenProcessToken");
-
 	if (!LookupPrivilegeValue(NULL, pszPrivilege, &tp.Privileges[0].Luid)) {
 		*errfunc = "LookupPrivilegeValue";
 		error = GetLastError();
 		goto out;
 	}
-
 	tp.PrivilegeCount = 1;
-
-	if (bEnable)
-		tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-	else
-		tp.Privileges[0].Attributes = 0;
-
+	tp.Privileges[0].Attributes = bEnable ? SE_PRIVILEGE_ENABLED : 0;
 	status = AdjustTokenPrivileges(hToken, FALSE, &tp, 0, (PTOKEN_PRIVILEGES)NULL, 0);
-
 	error = GetLastError();
 	if (!status || (error != ERROR_SUCCESS)) {
 		*errfunc = "AdjustTokenPrivileges";
 		goto out;
 	}
-
 out:
 	if (!CloseHandle(hToken)) {
 		if (*errfunc == NULL) {
@@ -214,7 +248,6 @@ void* allocLargePagesMemory(size_t bytes) {
 		errfunc = "No large pages";
 		return NULL;
 	}
-	// Round up to page size
 	size_t allocSize = ((bytes + pageMinimum - 1) / pageMinimum) * pageMinimum;
 	mem = VirtualAlloc(NULL, allocSize, MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES, PAGE_READWRITE);
 #else
@@ -223,12 +256,10 @@ void* allocLargePagesMemory(size_t bytes) {
 #elif defined(__FreeBSD__)
 	mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_ALIGNED_SUPER, -1, 0);
 #elif defined(__OpenBSD__) || defined(__NetBSD__)
-	mem = MAP_FAILED; // OpenBSD does not support huge pages
+	mem = MAP_FAILED;
 #else
-	// Try 1GB pages first if available (Linux only)
 	mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | (30 << MAP_HUGE_SHIFT) | MAP_POPULATE, -1, 0);
 	if (mem == MAP_FAILED) {
-		// Fall back to 2MB pages
 		mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE, -1, 0);
 	}
 #endif
@@ -242,9 +273,10 @@ void freePagedMemory(void* ptr, size_t bytes) {
 #if defined(_WIN32) || defined(__CYGWIN__)
 	VirtualFree(ptr, 0, MEM_RELEASE);
 #else
-	// some munmap implementations can crash on null pointer, despite what the manpage says
 	if (ptr) {
 		munmap(ptr, bytes);
 	}
 #endif
 }
+
+#endif
