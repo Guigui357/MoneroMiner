@@ -20,7 +20,7 @@ EMSCRIPTEN_FLAGS = \
     -s EXPORTED_FUNCTIONS="['_startMining','_stopMining','_main']" \
     -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','allocateUTF8']" \
     -lwebsocket.js \
-    -s MALLOC=mimalloc
+    -s MALLOC=mimalloc \
     -s PROXY_TO_PTHREAD=1
 
 LDFLAGS = $(EMSCRIPTEN_FLAGS) -flto -O3
