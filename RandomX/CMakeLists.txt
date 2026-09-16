@@ -68,10 +68,6 @@ if(EMSCRIPTEN)
     message(STATUS "Native RandomX JIT: DISABLED")
     message(STATUS "Backend: interpreted VM")
 
-    target_compile_options(randomx INTERFACE
-        -O3
-    )
-
     # --------------------------------------------------------
     # SIMD128
     # --------------------------------------------------------
