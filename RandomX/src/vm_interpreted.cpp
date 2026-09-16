@@ -45,12 +45,15 @@ namespace randomx {
         // RANDOMX_FLAG_JIT refers to the native x86/ARM JIT and must
         // remain disabled on WebAssembly. The generated WASM module
         // executes the RandomX program directly against this register file.
-        wasmJitReady = wasmJit.compile(program);
-        if (!wasmJitReady) {
-            std::cerr << "[WASM-JIT] compile failed; using interpreter fallback" << std::endl;
-        }
-        else {
-            std::cerr << "[WASM-JIT] custom JIT ready; hashing through generated WASM" << std::endl;
+        if (!wasmJitDisabled) {
+            wasmJitReady = wasmJit.compile(program);
+            if (!wasmJitReady) {
+                wasmJitDisabled = true;
+                std::cerr << "[WASM-JIT] compile failed; disabling JIT and using interpreter" << std::endl;
+            }
+            else {
+                std::cerr << "[WASM-JIT] custom JIT ready; hashing through generated WASM" << std::endl;
+            }
         }
 #endif
 
@@ -58,10 +61,9 @@ namespace randomx {
 		uint32_t spAddr1 = mem.ma;
 
 #ifdef __EMSCRIPTEN__
-        // A failed generated module must never be called again for this VM.
-        // WebAssembly traps are expensive on mobile browsers and repeatedly
-        // entering the failing module can destabilize WebKit worker threads.
-        bool wasmJitUsable = wasmJitReady;
+        // Once a generated module fails at runtime, never enter it again
+        // for this VM. This prevents repeated WebAssembly traps on mobile.
+        const bool wasmJitUsable = wasmJitReady && !wasmJitDisabled;
 #endif
 
 		for(unsigned ic = 0; ic < RANDOMX_PROGRAM_ITERATIONS; ++ic) {
@@ -94,10 +96,10 @@ namespace randomx {
             );
 
             if (!executed) {
-                // Disable the generated module for the remainder of this VM.
-                // The interpreter is the correctness-preserving fallback.
-                wasmJitUsable = false;
-                std::cerr << "[WASM-JIT] execution failed once; disabling JIT for this VM and using interpreter" << std::endl;
+                // Disable permanently for this VM. The interpreter remains
+                // the correctness-preserving fallback for the current hash.
+                wasmJitDisabled = true;
+                std::cerr << "[WASM-JIT] execution failed; disabling JIT for this VM and using interpreter" << std::endl;
             }
         }
 
