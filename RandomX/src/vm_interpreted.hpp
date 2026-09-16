@@ -68,6 +68,7 @@ namespace randomx {
 #ifdef __EMSCRIPTEN__
 		WasmJit wasmJit;
 		bool wasmJitReady = false;
+		bool wasmJitDisabled = false;
 #endif
 	};
 
