@@ -41,7 +41,17 @@ namespace randomx {
 		compileProgram(program, bytecode, nreg);
 
 #ifdef __EMSCRIPTEN__
+        // The custom WASM JIT is independent of RANDOMX_FLAG_JIT.
+        // RANDOMX_FLAG_JIT refers to the native x86/ARM JIT and must
+        // remain disabled on WebAssembly. The generated WASM module
+        // executes the RandomX program directly against this register file.
         wasmJitReady = wasmJit.compile(program);
+        if (!wasmJitReady) {
+            std::cerr << "[WASM-JIT] compile failed; using interpreter fallback" << std::endl;
+        }
+        else {
+            std::cerr << "[WASM-JIT] custom JIT ready; hashing through generated WASM" << std::endl;
+        }
 #endif
 
 		uint32_t spAddr0 = mem.mx;
@@ -65,16 +75,24 @@ namespace randomx {
 
 #ifdef __EMSCRIPTEN__
 
-        const bool jitResult = wasmJit.execute(
-            reinterpret_cast<uint8_t*>(nreg.r),
-            reinterpret_cast<uint8_t*>(nreg.f),
-            reinterpret_cast<uint8_t*>(nreg.e),
-            reinterpret_cast<uint8_t*>(nreg.a),
-            scratchpad
-        );
+        bool executed = false;
 
-        if (!jitResult) {
-            return;
+        if (wasmJitReady) {
+            executed = wasmJit.execute(
+                reinterpret_cast<uint8_t*>(nreg.r),
+                reinterpret_cast<uint8_t*>(nreg.f),
+                reinterpret_cast<uint8_t*>(nreg.e),
+                reinterpret_cast<uint8_t*>(nreg.a),
+                scratchpad
+            );
+
+            if (!executed) {
+                std::cerr << "[WASM-JIT] execution failed; falling back to interpreter" << std::endl;
+            }
+        }
+
+        if (!executed) {
+            executeBytecode(bytecode, scratchpad, config);
         }
 			
 #else
