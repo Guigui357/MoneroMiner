@@ -57,6 +57,13 @@ namespace randomx {
 		uint32_t spAddr0 = mem.mx;
 		uint32_t spAddr1 = mem.ma;
 
+#ifdef __EMSCRIPTEN__
+        // A failed generated module must never be called again for this VM.
+        // WebAssembly traps are expensive on mobile browsers and repeatedly
+        // entering the failing module can destabilize WebKit worker threads.
+        bool wasmJitUsable = wasmJitReady;
+#endif
+
 		for(unsigned ic = 0; ic < RANDOMX_PROGRAM_ITERATIONS; ++ic) {
 			uint64_t spMix = nreg.r[config.readReg0] ^ nreg.r[config.readReg1];
 			spAddr0 ^= spMix;
@@ -77,7 +84,7 @@ namespace randomx {
 
         bool executed = false;
 
-        if (wasmJitReady) {
+        if (wasmJitUsable) {
             executed = wasmJit.execute(
                 reinterpret_cast<uint8_t*>(nreg.r),
                 reinterpret_cast<uint8_t*>(nreg.f),
@@ -87,7 +94,10 @@ namespace randomx {
             );
 
             if (!executed) {
-                std::cerr << "[WASM-JIT] execution failed; falling back to interpreter" << std::endl;
+                // Disable the generated module for the remainder of this VM.
+                // The interpreter is the correctness-preserving fallback.
+                wasmJitUsable = false;
+                std::cerr << "[WASM-JIT] execution failed once; disabling JIT for this VM and using interpreter" << std::endl;
             }
         }
 
