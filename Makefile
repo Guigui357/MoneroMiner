@@ -4,10 +4,6 @@
 CXX = em++
 CC = emcc
 
-# Optimize both the miner and RandomX. LTO lets LLVM optimize across the
-# MoneroMiner/RandomX boundary; SIMD is required by the browser build.
-CXXFLAGS = -std=c++17 -O3 -flto -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
-CFLAGS = -O3 -flto -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 
 # RandomX Fast mode needs the full dataset (~2.08 GiB). The old 2 GiB
 # Emscripten ceiling was too small once the dataset and the rest of the heap
