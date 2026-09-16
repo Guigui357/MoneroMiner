@@ -12,18 +12,24 @@ CFLAGS = -O3 -flto -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
 # RandomX Fast mode needs the full dataset (~2.08 GiB). The old 2 GiB
 # Emscripten ceiling was too small once the dataset and the rest of the heap
 # were combined, so allow a 3 GiB wasm32 heap.
+# Optimize both the miner and RandomX. LTO lets LLVM optimize across the
+# MoneroMiner/RandomX boundary; SIMD is required by the browser build.
+CXXFLAGS = -std=c++17 -O3 -flto -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
+CFLAGS = -O3 -flto -Wall -Wextra -pthread -msimd128 -DEMSCRIPTEN
+
 EMSCRIPTEN_FLAGS = \
     -s WASM=1 \
     -s USE_PTHREADS=1 \
-    -s PTHREAD_POOL_SIZE=16 \
+    -s PTHREAD_POOL_SIZE=6 \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s INITIAL_MEMORY=268435456 \
-    -s MAXIMUM_MEMORY=3221225472 \
+    -s MAXIMUM_MEMORY=2147483648 \
     -s ENVIRONMENT="web,worker" \
     -s EXPORTED_FUNCTIONS="['_startMining','_stopMining','_main']" \
     -s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','allocateUTF8']" \
     -lwebsocket.js \
-    -s SINGLE_FILE=1
+    -s MALLOC=mimalloc \
+    -s PROXY_TO_PTHREAD=1
 
 LDFLAGS = $(EMSCRIPTEN_FLAGS) -O3 -flto
 
