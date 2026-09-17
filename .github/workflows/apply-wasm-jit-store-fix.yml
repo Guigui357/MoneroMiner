@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message != 'fix: correct WASM JIT store operand order'
+    if: "${{ github.event.head_commit.message != 'fix: correct WASM JIT store operand order' }}"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
