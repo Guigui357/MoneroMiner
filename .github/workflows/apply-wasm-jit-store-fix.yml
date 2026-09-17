@@ -1,0 +1,34 @@
+name: Apply WASM JIT store fix
+
+on:
+  push:
+    branches:
+      - miner-v2
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'fix: correct WASM JIT store operand order'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: miner-v2
+          fetch-depth: 0
+
+      - name: Patch store helpers
+        run: |
+          python3 -c 'from pathlib import Path; p=Path("RandomX/src/wasm_jit.cpp"); s=p.read_text(); old="""static void store_reg(std::vector<uint8_t>& c,\n                      uint32_t r) {\n    local_get(c, 0);\n\n    i32_const(\n        c,\n        static_cast<int32_t>(r * 8)\n    );\n\n    c.push_back(0x6a); // i32.add\n\n    i64_store(c);\n}"""; new="""static void store_reg(std::vector<uint8_t>& c,\n                      uint32_t r) {\n    local_set(c, 62);\n    local_get(c, 0);\n\n    i32_const(\n        c,\n        static_cast<int32_t>(r * 8)\n    );\n\n    c.push_back(0x6a); // i32.add\n    local_get(c, 62);\n    i64_store(c);\n}"""; assert old in s, "store_reg definition not found"; s=s.replace(old,new,1); old="""static void store_fp_lane(std::vector<uint8_t>& c,\n                          uint32_t ptr_local,\n                          uint32_t index,\n                          uint32_t lane) {\n    local_get(c, ptr_local);\n\n    i32_const(\n        c,\n        static_cast<int32_t>(\n            index * 16 + lane * 8\n        )\n    );\n\n    c.push_back(0x6a); // i32.add\n\n    i64_store(c);\n}"""; new="""static void store_fp_lane(std::vector<uint8_t>& c,\n                          uint32_t ptr_local,\n                          uint32_t index,\n                          uint32_t lane) {\n    local_set(c, 62);\n    local_get(c, ptr_local);\n\n    i32_const(\n        c,\n        static_cast<int32_t>(\n            index * 16 + lane * 8\n        )\n    );\n\n    c.push_back(0x6a); // i32.add\n    local_get(c, 62);\n    i64_store(c);\n}"""; assert old in s, "store_fp_lane definition not found"; s=s.replace(old,new,1); p.write_text(s)' 
+          git diff --check
+          git diff -- RandomX/src/wasm_jit.cpp
+
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add RandomX/src/wasm_jit.cpp
+          git commit -m 'fix: correct WASM JIT store operand order'
+          git push origin HEAD:miner-v2
