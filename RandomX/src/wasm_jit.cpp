@@ -110,6 +110,7 @@ static void load_reg(std::vector<uint8_t>& c,
 
 static void store_reg(std::vector<uint8_t>& c,
                       uint32_t r) {
+    local_set(c, 62);
     local_get(c, 0);
 
     i32_const(
@@ -118,7 +119,7 @@ static void store_reg(std::vector<uint8_t>& c,
     );
 
     c.push_back(0x6a); // i32.add
-
+    local_get(c, 62);
     i64_store(c);
 }
 
@@ -160,6 +161,7 @@ static void store_fp_lane(std::vector<uint8_t>& c,
                           uint32_t ptr_local,
                           uint32_t index,
                           uint32_t lane) {
+    local_set(c, 62);
     local_get(c, ptr_local);
 
     i32_const(
@@ -170,7 +172,7 @@ static void store_fp_lane(std::vector<uint8_t>& c,
     );
 
     c.push_back(0x6a); // i32.add
-
+    local_get(c, 62);
     i64_store(c);
 }
 
