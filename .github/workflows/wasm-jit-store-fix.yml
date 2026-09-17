@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message != 'fix: correct WASM JIT store operand order'
+    if: "github.event.head_commit.message != 'fix: correct WASM JIT store operand order'"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,10 +39,10 @@ jobs:
     i64_store(c);
 }'''
           new = '''static void store_reg(std::vector<uint8_t>& c,
-                      uint32_t r,
-                      uint32_t value_local) {
-    // WASM stores consume [address, value]. Emit the address first,
-    // then the register value, so the generated stack order is valid.
+                      uint32_t r) {
+    // Final writeback occurs after the dispatcher. Use pc (local 62)
+    // as a temporary to reorder the value/address operands.
+    local_set(c, 62);
     local_get(c, 0);
 
     i32_const(
@@ -51,7 +51,7 @@ jobs:
     );
 
     c.push_back(0x6a); // i32.add
-    local_get(c, value_local);
+    local_get(c, 62);
     i64_store(c);
 }'''
           if old not in s:
@@ -78,10 +78,10 @@ jobs:
           new = '''static void store_fp_lane(std::vector<uint8_t>& c,
                           uint32_t ptr_local,
                           uint32_t index,
-                          uint32_t lane,
-                          uint32_t value_local) {
-    // WASM stores consume [address, value]. Emit the address first,
-    // then the floating-point bit-pattern held in the local.
+                          uint32_t lane) {
+    // Final writeback occurs after the dispatcher. Use pc (local 62)
+    // as a temporary to reorder the value/address operands.
+    local_set(c, 62);
     local_get(c, ptr_local);
 
     i32_const(
@@ -92,87 +92,16 @@ jobs:
     );
 
     c.push_back(0x6a); // i32.add
-    local_get(c, value_local);
+    local_get(c, 62);
     i64_store(c);
 }'''
           if old not in s:
               raise SystemExit('store_fp_lane definition not found')
           s = s.replace(old, new, 1)
 
-          # Remove the old value-before-address emission at the final stores.
-          s = s.replace('''        local_get(
-            code,
-            static_cast<uint32_t>(5 + r)
-        );
-
-        store_reg(
-            code,
-            static_cast<uint32_t>(r)
-        );''', '''        store_reg(
-            code,
-            static_cast<uint32_t>(r),
-            static_cast<uint32_t>(5 + r)
-        );''', 1)
-
-          s = s.replace('''            local_get(
-                code,
-                f_local(0, r, lane)
-            );
-
-            store_fp_lane(
-                code,
-                1,
-                static_cast<uint32_t>(r),
-                static_cast<uint32_t>(lane)
-            );''', '''            store_fp_lane(
-                code,
-                1,
-                static_cast<uint32_t>(r),
-                static_cast<uint32_t>(lane),
-                static_cast<uint32_t>(f_local(0, r, lane))
-            );''', 1)
-
-          s = s.replace('''            local_get(
-                code,
-                f_local(1, r, lane)
-            );
-
-            store_fp_lane(
-                code,
-                2,
-                static_cast<uint32_t>(r),
-                static_cast<uint32_t>(lane)
-            );''', '''            store_fp_lane(
-                code,
-                2,
-                static_cast<uint32_t>(r),
-                static_cast<uint32_t>(lane),
-                static_cast<uint32_t>(f_local(1, r, lane))
-            );''', 1)
-
-          s = s.replace('''            local_get(
-                code,
-                f_local(2, r, lane)
-            );
-
-            store_fp_lane(
-                code,
-                3,
-                static_cast<uint32_t>(r),
-                static_cast<uint32_t>(lane)
-            );''', '''            store_fp_lane(
-                code,
-                3,
-                static_cast<uint32_t>(r),
-                static_cast<uint32_t>(lane),
-                static_cast<uint32_t>(f_local(2, r, lane))
-            );''', 1)
-
           p.write_text(s)
           PY
 
-          grep -n -A16 'static void store_reg' RandomX/src/wasm_jit.cpp
-          grep -n -A18 'static void store_fp_lane' RandomX/src/wasm_jit.cpp
           git diff --check
           git diff -- RandomX/src/wasm_jit.cpp
 
@@ -181,7 +110,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add RandomX/src/wasm_jit.cpp .github/workflows/wasm-jit-store-fix.yml
+          git add RandomX/src/wasm_jit.cpp
           git rm .github/workflows/wasm-jit-store-fix.yml
           git commit -m 'fix: correct WASM JIT store operand order'
           git push origin HEAD:miner-v2
