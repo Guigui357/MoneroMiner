@@ -562,7 +562,7 @@ bool WasmJit::compile(const Program& program) {
      * ------------------------------------------------------------
      */
     i32_const(code, 0);
-    local_set(code, LOCAL_TMP);
+    local_set(code, LOCAL_PC);
 
     /*
      * ------------------------------------------------------------
@@ -1124,7 +1124,7 @@ bool WasmJit::compile(const Program& program) {
                 2,
                 f_local(0, fdst, 0),
                 f_local(2, fsrc, 0),
-                61
+                LOCAL_FPRC
             );
 
             local_set(
@@ -1137,7 +1137,7 @@ bool WasmJit::compile(const Program& program) {
                 2,
                 f_local(0, fdst, 1),
                 f_local(2, fsrc, 1),
-                61
+                LOCAL_FPRC
             );
 
             local_set(
@@ -1176,7 +1176,7 @@ bool WasmJit::compile(const Program& program) {
                     static_cast<uint32_t>(lane)
                 );
 
-                local_get(code, 37);
+                local_get(code, LOCAL_FPRC);
 
                 emit_call(code, 2);
 
@@ -1194,7 +1194,7 @@ bool WasmJit::compile(const Program& program) {
                 3,
                 f_local(0, fdst, 0),
                 f_local(2, fsrc, 0),
-                61
+                LOCAL_FPRC
             );
 
             local_set(
@@ -1207,7 +1207,7 @@ bool WasmJit::compile(const Program& program) {
                 3,
                 f_local(0, fdst, 1),
                 f_local(2, fsrc, 1),
-                61
+                LOCAL_FPRC
             );
 
             local_set(
@@ -1246,7 +1246,7 @@ bool WasmJit::compile(const Program& program) {
                     static_cast<uint32_t>(lane)
                 );
 
-                local_get(code, 61);
+                local_get(code, LOCAL_FPRC);
 
                 emit_call(code, 3);
 
@@ -1292,7 +1292,7 @@ bool WasmJit::compile(const Program& program) {
                 4,
                 f_local(1, fdst, 0),
                 f_local(2, fsrc, 0),
-                61
+                LOCAL_FPRC
             );
 
             local_set(
@@ -1305,7 +1305,7 @@ bool WasmJit::compile(const Program& program) {
                 4,
                 f_local(1, fdst, 1),
                 f_local(2, fsrc, 1),
-                61
+                LOCAL_FPRC
             );
 
             local_set(
@@ -1344,7 +1344,7 @@ bool WasmJit::compile(const Program& program) {
                     static_cast<uint32_t>(lane)
                 );
 
-                local_get(code, 61);
+                local_get(code, LOCAL_FPRC);
 
                 emit_call(code, 5);
 
@@ -1361,7 +1361,7 @@ bool WasmJit::compile(const Program& program) {
                 code,
                 6,
                 f_local(1, fdst, 0),
-                61
+                LOCAL_FPRC
             );
 
             local_set(
@@ -1373,7 +1373,7 @@ bool WasmJit::compile(const Program& program) {
                 code,
                 6,
                 f_local(1, fdst, 1),
-                61
+                LOCAL_FPRC
             );
 
             local_set(
@@ -1429,13 +1429,13 @@ bool WasmJit::compile(const Program& program) {
             /*
              * Default = pc + 1.
              */
-            local_get(code, 62);
+            local_get(code, LOCAL_PC);
 
             i32_const(code, 1);
 
             code.push_back(0x6a);
 
-            local_set(code, 62);
+            local_set(code, LOCAL_PC);
 
             /*
              * Test condition.
@@ -1468,7 +1468,7 @@ bool WasmJit::compile(const Program& program) {
                 )
             );
 
-            local_set(code, 62);
+            local_set(code, LOCAL_PC);
 
             code.push_back(0x0b);
 
@@ -1935,11 +1935,12 @@ bool WasmJit::compile(const Program& program) {
      *   24 x i64 = F/E/A
      *   1  x i32 = fprc
      *   1  x i32 = pc
+     *   1  x i64 = tmp
      * ------------------------------------------------------------
      */
     std::vector<uint8_t> body;
 
-    uleb(body, 4);
+    uleb(body, 5);
 
     // 8 x i64
     uleb(body, 8);
@@ -1956,6 +1957,10 @@ bool WasmJit::compile(const Program& program) {
     // 1 x i32 = pc
     uleb(body, 1);
     body.push_back(0x7f);
+
+    // 1 x i64 = tmp
+    uleb(body, 1);
+    body.push_back(0x7e);
 
     /*
      * Function instructions.
