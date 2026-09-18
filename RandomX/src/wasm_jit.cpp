@@ -110,7 +110,7 @@ static void load_reg(std::vector<uint8_t>& c,
 
 static void store_reg(std::vector<uint8_t>& c,
                       uint32_t r) {
-    local_set(c, 62);
+    local_set(c, 39);
     local_get(c, 0);
 
     i32_const(
@@ -119,7 +119,7 @@ static void store_reg(std::vector<uint8_t>& c,
     );
 
     c.push_back(0x6a); // i32.add
-    local_get(c, 62);
+    local_get(c, 39);
     i64_store(c);
 }
 
@@ -161,7 +161,7 @@ static void store_fp_lane(std::vector<uint8_t>& c,
                           uint32_t ptr_local,
                           uint32_t index,
                           uint32_t lane) {
-    local_set(c, 62);
+    local_set(c, 39);
     local_get(c, ptr_local);
 
     i32_const(
@@ -172,7 +172,7 @@ static void store_fp_lane(std::vector<uint8_t>& c,
     );
 
     c.push_back(0x6a); // i32.add
-    local_get(c, 62);
+    local_get(c, 39);
     i64_store(c);
 }
 
@@ -550,7 +550,7 @@ bool WasmJit::compile(const Program& program) {
      * ------------------------------------------------------------
      */
     i32_const(code, 0);
-    local_set(code, 61);
+    local_set(code, 37);
 
     /*
      * ------------------------------------------------------------
@@ -558,7 +558,7 @@ bool WasmJit::compile(const Program& program) {
      * ------------------------------------------------------------
      */
     i32_const(code, 0);
-    local_set(code, 62);
+    local_set(code, 39);
 
     /*
      * ------------------------------------------------------------
@@ -642,7 +642,7 @@ bool WasmJit::compile(const Program& program) {
      * pc -> br_table
      * ------------------------------------------------------------
      */
-    local_get(code, 62);
+    local_get(code, 38);
 
     /*
      * br_table
@@ -1172,7 +1172,7 @@ bool WasmJit::compile(const Program& program) {
                     static_cast<uint32_t>(lane)
                 );
 
-                local_get(code, 61);
+                local_get(code, 37);
 
                 emit_call(code, 2);
 
