@@ -230,19 +230,63 @@ bool WasmJit::execute(uint8_t* regs,
                       uint8_t* e,
                       uint8_t* a,
                       uint8_t* scratchpad) {
-    if (module_.empty() || regs == nullptr || f == nullptr || e == nullptr ||
-        a == nullptr || scratchpad == nullptr) {
+
+    fprintf(stderr,
+        "[WASM-JIT-DEBUG] execute: module=%p size=%zu "
+        "regs=%p f=%p e=%p a=%p scratchpad=%p\n",
+        module_.data(),
+        module_.size(),
+        regs,
+        f,
+        e,
+        a,
+        scratchpad);
+
+    if (module_.empty()) {
+        fprintf(stderr, "[WASM-JIT-DEBUG] FAIL: module empty\n");
         return false;
     }
 
-    return randomx_wasm_execute_module(
-        module_.data(),
-        static_cast<int>(module_.size()),
-        static_cast<int>(reinterpret_cast<uintptr_t>(regs)),
-        static_cast<int>(reinterpret_cast<uintptr_t>(f)),
-        static_cast<int>(reinterpret_cast<uintptr_t>(e)),
-        static_cast<int>(reinterpret_cast<uintptr_t>(a)),
-        static_cast<int>(reinterpret_cast<uintptr_t>(scratchpad))) != 0;
+    if (!regs) {
+        fprintf(stderr, "[WASM-JIT-DEBUG] FAIL: regs == nullptr\n");
+        return false;
+    }
+
+    if (!f) {
+        fprintf(stderr, "[WASM-JIT-DEBUG] FAIL: f == nullptr\n");
+        return false;
+    }
+
+    if (!e) {
+        fprintf(stderr, "[WASM-JIT-DEBUG] FAIL: e == nullptr\n");
+        return false;
+    }
+
+    if (!a) {
+        fprintf(stderr, "[WASM-JIT-DEBUG] FAIL: a == nullptr\n");
+        return false;
+    }
+
+    if (!scratchpad) {
+        fprintf(stderr, "[WASM-JIT-DEBUG] FAIL: scratchpad == nullptr\n");
+        return false;
+    }
+
+    const bool result =
+        randomx_wasm_execute_module(
+            module_.data(),
+            static_cast<int>(module_.size()),
+            static_cast<int>(reinterpret_cast<uintptr_t>(regs)),
+            static_cast<int>(reinterpret_cast<uintptr_t>(f)),
+            static_cast<int>(reinterpret_cast<uintptr_t>(e)),
+            static_cast<int>(reinterpret_cast<uintptr_t>(a)),
+            static_cast<int>(reinterpret_cast<uintptr_t>(scratchpad))) != 0;
+
+    fprintf(stderr,
+        "[WASM-JIT-DEBUG] randomx_wasm_execute_module -> %d\n",
+        result ? 1 : 0);
+
+    return result;
 }
 
 } // namespace randomx
