@@ -24,7 +24,18 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
 
         if (!fn) {
             console.log('[WASM-JIT] Compilando WebAssembly.Module, bytes=' + module_size);
-            const wasmModule = new WebAssembly.Module(bytes);
+            let wasmModule;
+
+        try {
+            wasmModule = new WebAssembly.Module(bytes);
+            console.log('[WASM-JIT] WebAssembly.Module = OK');
+        } catch (e) {
+            console.error('[WASM-JIT] MODULE_CREATE_FAILED:', e);
+            console.error('[WASM-JIT] MODULE_CREATE_NAME:', e && e.name);
+            console.error('[WASM-JIT] MODULE_CREATE_MESSAGE:', e && e.message);
+            console.error('[WASM-JIT] MODULE_SIZE:', module_size);
+            return 0;
+        }
             console.log('[WASM-JIT] WebAssembly.Module = OK');
 
             const memory = Module['wasmMemory'];
