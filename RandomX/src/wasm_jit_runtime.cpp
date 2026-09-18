@@ -167,19 +167,30 @@ EM_JS(int, randomx_wasm_execute_module, (const uint8_t* module_ptr,
             const fpSqrt = (aBits, mode) => fp.fp_sqrt(aBits, mode | 0);
             const fpFromI32 = (value) => fp.fp_from_i32(value | 0);
 
-            const instance = new WebAssembly.Instance(wasmModule, {
-                env: {
-                    memory: memory,
-                    mulh_u64: mulh.mulh_u64,
-                    mulh_s64: mulh.mulh_s64,
-                    fp_add: (a, b, mode) => fpBin(a, b, mode, 0),
-                    fp_sub: (a, b, mode) => fpBin(a, b, mode, 1),
-                    fp_mul: (a, b, mode) => fpBin(a, b, mode, 2),
-                    fp_div: (a, b, mode) => fpBin(a, b, mode, 3),
-                    fp_sqrt: (a, mode) => fpSqrt(a, mode),
-                    fp_from_i32: fpFromI32
-                }
-            });
+            let instance;
+
+            try {
+                instance = new WebAssembly.Instance(wasmModule, {
+                    env: {
+                          memory: memory,
+                          mulh_u64: mulh.mulh_u64,
+                          mulh_s64: mulh.mulh_s64,
+                          fp_add: (a, b, mode) => fpBin(a, b, mode, 0),
+                          fp_sub: (a, b, mode) => fpBin(a, b, mode, 1),
+                          fp_mul: (a, b, mode) => fpBin(a, b, mode, 2),
+                          fp_div: (a, b, mode) => fpBin(a, b, mode, 3),
+                          fp_sqrt: (a, mode) => fpSqrt(a, mode),
+                          fp_from_i32: fpFromI32
+                    }
+              });
+
+              console.log('[WASM-JIT] WebAssembly.Instance = OK');
+          } catch (e) {
+              console.error('[WASM-JIT] INSTANCE_CREATE_FAILED:', e);
+              console.error('[WASM-JIT] INSTANCE_CREATE_NAME:', e && e.name);
+              console.error('[WASM-JIT] INSTANCE_CREATE_MESSAGE:', e && e.message);
+              return 0;
+          }
 
             fn = instance.exports.rx_jit;
             if (typeof fn !== 'function') {
