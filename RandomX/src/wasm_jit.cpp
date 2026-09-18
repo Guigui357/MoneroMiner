@@ -8,6 +8,10 @@
 namespace randomx {
 namespace {
 
+static constexpr uint32_t LOCAL_FPRC = 37;
+static constexpr uint32_t LOCAL_PC   = 38;
+static constexpr uint32_t LOCAL_TMP  = 39;
+
 static void uleb(std::vector<uint8_t>& out, uint32_t value) {
     do {
         uint8_t b = static_cast<uint8_t>(value & 0x7fu);
@@ -161,7 +165,7 @@ static void store_fp_lane(std::vector<uint8_t>& c,
                           uint32_t ptr_local,
                           uint32_t index,
                           uint32_t lane) {
-    local_set(c, 39);
+    local_set(c, LOCAL_TMP);
     local_get(c, ptr_local);
 
     i32_const(
@@ -172,7 +176,7 @@ static void store_fp_lane(std::vector<uint8_t>& c,
     );
 
     c.push_back(0x6a); // i32.add
-    local_get(c, 39);
+    local_get(c, LOCAL_TMP);
     i64_store(c);
 }
 
@@ -550,7 +554,7 @@ bool WasmJit::compile(const Program& program) {
      * ------------------------------------------------------------
      */
     i32_const(code, 0);
-    local_set(code, 37);
+    local_set(code, LOCAL_FPRC);
 
     /*
      * ------------------------------------------------------------
@@ -558,7 +562,7 @@ bool WasmJit::compile(const Program& program) {
      * ------------------------------------------------------------
      */
     i32_const(code, 0);
-    local_set(code, 39);
+    local_set(code, LOCAL_TMP);
 
     /*
      * ------------------------------------------------------------
@@ -642,7 +646,7 @@ bool WasmJit::compile(const Program& program) {
      * pc -> br_table
      * ------------------------------------------------------------
      */
-    local_get(code, 38);
+    local_get(code, LOCAL_PC);
 
     /*
      * br_table
@@ -1480,7 +1484,7 @@ bool WasmJit::compile(const Program& program) {
              *
              * Depth to loop:
              *
-             *   program_size - pc
+             *   program_size - pc - 1
              */
             code.push_back(0x0c);
 
@@ -1535,7 +1539,7 @@ bool WasmJit::compile(const Program& program) {
 
             code.push_back(0xa7);
 
-            local_set(code, 61);
+            local_set(code, LOCAL_FPRC);
 
             code.push_back(0x0b);
         }
@@ -1575,13 +1579,13 @@ bool WasmJit::compile(const Program& program) {
          * CBRANCH used `continue`, so it never reaches here.
          * --------------------------------------------------------
          */
-        local_get(code, 62);
+        local_get(code, LOCAL_PC);
 
         i32_const(code, 1);
 
         code.push_back(0x6a);
 
-        local_set(code, 62);
+        local_set(code, LOCAL_PC);
 
         /*
          * --------------------------------------------------------
