@@ -1310,6 +1310,7 @@ EM_JS(int, randomx_wasm_execute_module, (
     }
 });
 
+} // anonymous namespace
 
 /*
  * ============================================================================
@@ -1601,7 +1602,6 @@ bool WasmJit::execute(
     return false;
 }
 
-} // anonymous namespace
 } // namespace randomx
 
 #endif // __EMSCRIPTEN__
