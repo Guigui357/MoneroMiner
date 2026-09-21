@@ -3,8 +3,9 @@
 #ifdef __EMSCRIPTEN__
 
 #include <cstdint>
-#include <cstdio>
+#include <cstddef>
 #include <climits>
+
 #include <emscripten/emscripten.h>
 
 namespace randomx {
@@ -12,29 +13,34 @@ namespace {
 
 /*
  * ============================================================================
- * RandomX WASM JIT runtime
+ * RandomX custom WASM JIT runtime
  * ============================================================================
  *
- * ABI:
+ * O módulo JIT gerado deve importar a MESMA memória linear utilizada pelo
+ * módulo principal do Emscripten:
  *
- *   rx_jit(
- *       i32 regs_ptr,
- *       i32 f_ptr,
- *       i32 e_ptr,
- *       i32 a_ptr,
- *       i32 scratchpad_ptr
- *   )
+ *     (import "env" "memory" ...)
  *
- * Os ponteiros são offsets da memória linear WASM/Emscripten.
+ * Os ponteiros recebidos de C++ são offsets dentro dessa memória.
  *
- * Retorno do runtime:
+ * O runtime:
  *
- *   1  = execução OK
- *   0  = falha
+ *   1. valida os argumentos;
+ *   2. copia o módulo WASM para fora do HEAP;
+ *   3. calcula um hash do módulo;
+ *   4. verifica o cache;
+ *   5. compila o módulo;
+ *   6. verifica imports/exports;
+ *   7. cria os helpers;
+ *   8. instancia usando a memória principal;
+ *   9. localiza rx_jit;
+ *  10. executa rx_jit;
+ *  11. captura e imprime qualquer trap.
  *
- * O motivo detalhado fica em:
+ * Retorno:
  *
- *   Module.__randomxLastJitError
+ *     1 = execução concluída
+ *     0 = erro
  *
  * ============================================================================
  */
@@ -48,11 +54,6 @@ EM_JS(int, randomx_wasm_execute_module, (
     int a_ptr,
     int scratchpad_ptr
 ), {
-    /*
-     * Códigos internos de diagnóstico.
-     *
-     * O C++ recebe 1/0, enquanto o código detalhado fica no JS.
-     */
     const ERR = {
         OK: 0,
         INVALID_ARGUMENTS: 1,
@@ -67,102 +68,165 @@ EM_JS(int, randomx_wasm_execute_module, (
         POINTER_OOB: 10
     };
 
-    const setError = (code, message, exception) => {
-        Module.__randomxLastJitError = {
-            code: code,
-            message: message,
-            exception: exception || null
-        };
-
-        if (exception) {
-            console.error(
-                '[WASM-JIT] ERROR ' + code + ': ' + message,
-                exception
-            );
-        } else {
-            console.error(
-                '[WASM-JIT] ERROR ' + code + ': ' + message
-            );
-        }
-    };
-
-    const clearError = () => {
-        Module.__randomxLastJitError = {
-            code: ERR.OK,
-            message: 'OK',
-            exception: null
-        };
-    };
-
     try {
-        clearError();
-
-        /*
-         * --------------------------------------------------------------------
-         * Normalização dos argumentos.
-         *
-         * Emscripten WASM32 usa ponteiros i32.
-         * >>> 0 transforma corretamente em offsets unsigned.
-         * --------------------------------------------------------------------
-         */
-
-        const moduleOffset = module_ptr >>> 0;
-        const moduleSize = module_size | 0;
-
-        const regsPtr = regs_ptr >>> 0;
-        const fPtr = f_ptr >>> 0;
-        const ePtr = e_ptr >>> 0;
-        const aPtr = a_ptr >>> 0;
-        const scratchpadPtr = scratchpad_ptr >>> 0;
-
         console.log(
-            '[WASM-JIT-DEBUG] execute module=0x' +
-            moduleOffset.toString(16) +
-            ' size=' + moduleSize +
-            ' regs=0x' + regsPtr.toString(16) +
-            ' f=0x' + fPtr.toString(16) +
-            ' e=0x' + ePtr.toString(16) +
-            ' a=0x' + aPtr.toString(16) +
-            ' scratchpad=0x' + scratchpadPtr.toString(16)
+            '[WASM-JIT-DEBUG] =================================================='
+        );
+        console.log(
+            '[WASM-JIT-DEBUG] randomx_wasm_execute_module()'
         );
 
         /*
          * --------------------------------------------------------------------
-         * Validação básica.
+         * 1. Argumentos básicos
          * --------------------------------------------------------------------
          */
 
-        if (!moduleSize || moduleSize < 0) {
-            setError(
-                ERR.INVALID_ARGUMENTS,
-                'module_size inválido: ' + moduleSize
+        if (!module_ptr || module_ptr === 0) {
+            console.error(
+                '[WASM-JIT-ERROR] module_ptr inválido:',
+                module_ptr
             );
-            return 0;
+            return ERR.INVALID_ARGUMENTS;
         }
 
+        if (!module_size || module_size <= 0) {
+            console.error(
+                '[WASM-JIT-ERROR] module_size inválido:',
+                module_size
+            );
+            return ERR.INVALID_ARGUMENTS;
+        }
+
+        if (!regs_ptr || regs_ptr < 0) {
+            console.error(
+                '[WASM-JIT-ERROR] regs_ptr inválido:',
+                regs_ptr
+            );
+            return ERR.INVALID_ARGUMENTS;
+        }
+
+        if (!f_ptr || f_ptr < 0) {
+            console.error(
+                '[WASM-JIT-ERROR] f_ptr inválido:',
+                f_ptr
+            );
+            return ERR.INVALID_ARGUMENTS;
+        }
+
+        if (!e_ptr || e_ptr < 0) {
+            console.error(
+                '[WASM-JIT-ERROR] e_ptr inválido:',
+                e_ptr
+            );
+            return ERR.INVALID_ARGUMENTS;
+        }
+
+        if (!a_ptr || a_ptr < 0) {
+            console.error(
+                '[WASM-JIT-ERROR] a_ptr inválido:',
+                a_ptr
+            );
+            return ERR.INVALID_ARGUMENTS;
+        }
+
+        if (!scratchpad_ptr || scratchpad_ptr < 0) {
+            console.error(
+                '[WASM-JIT-ERROR] scratchpad_ptr inválido:',
+                scratchpad_ptr
+            );
+            return ERR.INVALID_ARGUMENTS;
+        }
+
+        console.log(
+            '[WASM-JIT-DEBUG] module_ptr =',
+            '0x' + (module_ptr >>> 0).toString(16)
+        );
+
+        console.log(
+            '[WASM-JIT-DEBUG] module_size =',
+            module_size
+        );
+
+        console.log(
+            '[WASM-JIT-DEBUG] regs_ptr =',
+            '0x' + (regs_ptr >>> 0).toString(16)
+        );
+
+        console.log(
+            '[WASM-JIT-DEBUG] f_ptr =',
+            '0x' + (f_ptr >>> 0).toString(16)
+        );
+
+        console.log(
+            '[WASM-JIT-DEBUG] e_ptr =',
+            '0x' + (e_ptr >>> 0).toString(16)
+        );
+
+        console.log(
+            '[WASM-JIT-DEBUG] a_ptr =',
+            '0x' + (a_ptr >>> 0).toString(16)
+        );
+
+        console.log(
+            '[WASM-JIT-DEBUG] scratchpad_ptr =',
+            '0x' + (scratchpad_ptr >>> 0).toString(16)
+        );
+
         /*
-         * O limite do HEAP precisa ser verificado antes de HEAPU8.slice().
+         * --------------------------------------------------------------------
+         * 2. HEAP principal
+         * --------------------------------------------------------------------
          */
+
+        if (typeof HEAPU8 === 'undefined' || !HEAPU8) {
+            console.error(
+                '[WASM-JIT-ERROR] HEAPU8 não está disponível'
+            );
+            return ERR.MEMORY;
+        }
+
         const heap = HEAPU8;
         const heapLength = heap.length >>> 0;
 
-        if (moduleOffset > heapLength ||
-            moduleSize > heapLength - moduleOffset) {
+        console.log(
+            '[WASM-JIT-DEBUG] HEAPU8.byteLength =',
+            heapLength
+        );
 
-            setError(
-                ERR.INVALID_ARGUMENTS,
-                'module_ptr/module_size fora de HEAPU8: ' +
-                'ptr=0x' + moduleOffset.toString(16) +
-                ' size=' + moduleSize +
-                ' heap=' + heapLength
+        /*
+         * module_ptr + module_size precisa estar dentro do HEAP.
+         */
+
+        const moduleOffset = module_ptr >>> 0;
+        const moduleSize = module_size >>> 0;
+
+        if (moduleOffset >= heapLength) {
+            console.error(
+                '[WASM-JIT-ERROR] module_ptr fora do HEAP:',
+                moduleOffset,
+                'heapLength=',
+                heapLength
             );
+            return ERR.POINTER_OOB;
+        }
 
-            return 0;
+        if (moduleSize > heapLength - moduleOffset) {
+            console.error(
+                '[WASM-JIT-ERROR] módulo ultrapassa o HEAP:',
+                'offset=',
+                moduleOffset,
+                'size=',
+                moduleSize,
+                'heapLength=',
+                heapLength
+            );
+            return ERR.POINTER_OOB;
         }
 
         /*
          * --------------------------------------------------------------------
-         * Memória WASM.
+         * 3. Memória WebAssembly
          * --------------------------------------------------------------------
          */
 
@@ -171,98 +235,149 @@ EM_JS(int, randomx_wasm_execute_module, (
             (typeof wasmMemory !== 'undefined' ? wasmMemory : null);
 
         if (!memory) {
-            setError(
-                ERR.MEMORY,
-                'wasmMemory indisponível'
+            console.error(
+                '[WASM-JIT-ERROR] Module.wasmMemory não encontrada'
             );
-            return 0;
+
+            console.error(
+                '[WASM-JIT-DEBUG] Module keys:',
+                Object.keys(Module || {})
+            );
+
+            return ERR.MEMORY;
         }
 
-        if (!memory.buffer) {
-            setError(
-                ERR.MEMORY,
-                'wasmMemory.buffer indisponível'
+        if (!(memory instanceof WebAssembly.Memory)) {
+            console.error(
+                '[WASM-JIT-ERROR] objeto de memória inválido:',
+                memory
             );
-            return 0;
+            return ERR.MEMORY;
         }
 
-        const memoryBytes = memory.buffer.byteLength >>> 0;
+        let memoryBuffer;
+
+        try {
+            memoryBuffer = memory.buffer;
+        } catch (e) {
+            console.error(
+                '[WASM-JIT-ERROR] não foi possível obter memory.buffer:',
+                e
+            );
+            return ERR.MEMORY;
+        }
+
+        if (!memoryBuffer) {
+            console.error(
+                '[WASM-JIT-ERROR] memory.buffer inexistente'
+            );
+            return ERR.MEMORY;
+        }
 
         console.log(
-            '[WASM-JIT] wasmMemory=' +
-            memoryBytes +
-            ' bytes (' +
-            (memoryBytes / 1048576).toFixed(2) +
-            ' MiB)'
+            '[WASM-JIT-DEBUG] memory =',
+            memory
+        );
+
+        console.log(
+            '[WASM-JIT-DEBUG] memory.buffer.byteLength =',
+            memoryBuffer.byteLength
         );
 
         /*
          * --------------------------------------------------------------------
-         * Os ponteiros precisam estar dentro da memória linear.
-         *
-         * Não sabemos aqui os tamanhos exatos dos objetos RandomX, então
-         * fazemos apenas a validação do início do objeto.
+         * 4. Validar os ponteiros contra a memória principal
          * --------------------------------------------------------------------
+         *
+         * Não conhecemos aqui o tamanho exato de cada estrutura, portanto
+         * fazemos pelo menos a validação dos endereços iniciais.
          */
 
-        const checkPointer = (name, ptr) => {
-            if (ptr >= memoryBytes) {
-                setError(
-                    ERR.POINTER_OOB,
-                    name +
-                    ' fora da memória WASM: 0x' +
-                    ptr.toString(16) +
-                    ' >= ' +
-                    memoryBytes
+        const memorySize = memoryBuffer.byteLength >>> 0;
+
+        function checkPointer(name, ptr) {
+            const p = ptr >>> 0;
+
+            if (p >= memorySize) {
+                console.error(
+                    '[WASM-JIT-ERROR] ponteiro fora da memória:',
+                    name,
+                    '0x' + p.toString(16),
+                    'memorySize=',
+                    memorySize
                 );
+
                 return false;
             }
 
-            return true;
-        };
+            console.log(
+                '[WASM-JIT-DEBUG] pointer OK:',
+                name,
+                '0x' + p.toString(16)
+            );
 
-        if (!checkPointer('regs', regsPtr)) return 0;
-        if (!checkPointer('f', fPtr)) return 0;
-        if (!checkPointer('e', ePtr)) return 0;
-        if (!checkPointer('a', aPtr)) return 0;
-        if (!checkPointer('scratchpad', scratchpadPtr)) return 0;
+            return true;
+        }
+
+        if (!checkPointer('regs', regs_ptr)) {
+            return ERR.POINTER_OOB;
+        }
+
+        if (!checkPointer('f', f_ptr)) {
+            return ERR.POINTER_OOB;
+        }
+
+        if (!checkPointer('e', e_ptr)) {
+            return ERR.POINTER_OOB;
+        }
+
+        if (!checkPointer('a', a_ptr)) {
+            return ERR.POINTER_OOB;
+        }
+
+        if (!checkPointer('scratchpad', scratchpad_ptr)) {
+            return ERR.POINTER_OOB;
+        }
 
         /*
          * --------------------------------------------------------------------
-         * Copia do módulo.
-         *
-         * Uint8Array.slice() cria uma cópia independente do HEAP.
-         * Isso evita que crescimento/mutação do HEAP altere o módulo enquanto
-         * WebAssembly.Module está sendo criado.
+         * 5. Copiar bytes do módulo
          * --------------------------------------------------------------------
          */
 
-        const bytes = heap.slice(
-            moduleOffset,
-            moduleOffset + moduleSize
-        );
+        let bytes;
+
+        try {
+            bytes = heap.slice(
+                moduleOffset,
+                moduleOffset + moduleSize
+            );
+        } catch (e) {
+            console.error(
+                '[WASM-JIT-ERROR] falha ao copiar módulo:',
+                e
+            );
+            return ERR.MODULE_CREATE;
+        }
+
+        if (!bytes || bytes.length !== moduleSize) {
+            console.error(
+                '[WASM-JIT-ERROR] cópia do módulo possui tamanho inválido:',
+                bytes ? bytes.length : null,
+                'esperado:',
+                moduleSize
+            );
+            return ERR.MODULE_CREATE;
+        }
 
         /*
          * --------------------------------------------------------------------
-         * Cache.
-         *
-         * O cache anterior usava apenas:
-         *
-         *   module_ptr + module_size
-         *
-         * Isso pode reutilizar incorretamente uma função se o mesmo endereço
-         * do HEAP for reutilizado para bytes diferentes.
-         *
-         * Usamos um hash FNV-1a 32-bit dos bytes.
+         * 6. FNV-1a
          * --------------------------------------------------------------------
          */
 
         let hash = 2166136261 >>> 0;
 
-        /*
-         * Hash completo para módulos normais (~10 KB).
-         * É barato comparado à compilação de WebAssembly.Module.
-         */
         for (let i = 0; i < bytes.length; ++i) {
             hash ^= bytes[i];
             hash = Math.imul(hash, 16777619) >>> 0;
@@ -273,764 +388,769 @@ EM_JS(int, randomx_wasm_execute_module, (
             ':' +
             hash.toString(16);
 
+        console.log(
+            '[WASM-JIT-DEBUG] module cache key =',
+            key
+        );
+
+        /*
+         * --------------------------------------------------------------------
+         * 7. Cache
+         * --------------------------------------------------------------------
+         */
+
         const cache =
             Module.__randomxJitCache ||
             (Module.__randomxJitCache =
                 Object.create(null));
 
-        const stats =
-            Module.__randomxJitStats ||
-            (Module.__randomxJitStats = {
-                executions: 0,
-                compilations: 0,
-                traps: 0,
-                failures: 0
-            });
+        let cached = cache[key] || null;
 
-        let fn = cache[key];
+        let wasmModule = cached ? cached.module : null;
+        let instance = cached ? cached.instance : null;
+        let fn = cached ? cached.fn : null;
 
-        /*
-         * --------------------------------------------------------------------
-         * Compilação/instanciação.
-         * --------------------------------------------------------------------
-         */
-
-        if (!fn) {
+        if (cached && fn) {
             console.log(
-                '[WASM-JIT] Compilando WebAssembly.Module' +
-                ' bytes=' + moduleSize +
-                ' hash=0x' + hash.toString(16)
+                '[WASM-JIT] Cache HIT:',
+                key
             );
 
-            let wasmModule;
+            console.log(
+                '[WASM-JIT-DEBUG] cached instance =',
+                instance
+            );
+
+            console.log(
+                '[WASM-JIT-DEBUG] cached module =',
+                wasmModule
+            );
+
+            console.log(
+                '[WASM-JIT-DEBUG] cached function =',
+                fn
+            );
+        } else {
+            console.log(
+                '[WASM-JIT] Cache MISS:',
+                key
+            );
 
             /*
-             * WebAssembly.Module
+             * ---------------------------------------------------------------
+             * 8. Compilar WebAssembly.Module
+             * ---------------------------------------------------------------
              */
+
+            console.log(
+                '[WASM-JIT] Compilando WebAssembly.Module...'
+            );
+
             try {
                 wasmModule = new WebAssembly.Module(bytes);
-
-                console.log(
-                    '[WASM-JIT] WebAssembly.Module = OK'
-                );
             } catch (e) {
-                stats.failures++;
-
-                setError(
-                    ERR.MODULE_CREATE,
-                    'WebAssembly.Module falhou',
-                    e
+                console.error(
+                    '[WASM-JIT-ERROR] WebAssembly.Module falhou'
                 );
 
                 console.error(
-                    '[WASM-JIT] MODULE_CREATE_NAME:',
+                    '[WASM-JIT-ERROR] error.name =',
                     e && e.name
                 );
 
                 console.error(
-                    '[WASM-JIT] MODULE_CREATE_MESSAGE:',
+                    '[WASM-JIT-ERROR] error.message =',
                     e && e.message
                 );
 
                 console.error(
-                    '[WASM-JIT] MODULE_SIZE:',
-                    moduleSize
+                    '[WASM-JIT-ERROR] error.stack =',
+                    e && e.stack
                 );
 
+                return ERR.MODULE_CREATE;
+            }
+
+            console.log(
+                '[WASM-JIT] WebAssembly.Module = OK'
+            );
+
+            /*
+             * ---------------------------------------------------------------
+             * 9. Inspecionar imports
+             * ---------------------------------------------------------------
+             */
+
+            let imports = [];
+
+            try {
+                imports =
+                    WebAssembly.Module.imports(wasmModule);
+            } catch (e) {
                 console.error(
-                    '[WASM-JIT] MODULE_HASH:',
-                    '0x' + hash.toString(16)
+                    '[WASM-JIT-ERROR] Module.imports falhou:',
+                    e
                 );
 
-                return 0;
+                return ERR.MODULE_CREATE;
+            }
+
+            console.log(
+                '[WASM-JIT-DEBUG] MODULE IMPORTS:',
+                imports
+            );
+
+            for (let i = 0; i < imports.length; ++i) {
+                const imp = imports[i];
+
+                console.log(
+                    '[WASM-JIT-DEBUG] IMPORT[' + i + ']',
+                    'module=' + String(imp.module),
+                    'name=' + String(imp.name),
+                    'kind=' + String(imp.kind)
+                );
             }
 
             /*
-             * ----------------------------------------------------------------
-             * MULH helper
-             * ----------------------------------------------------------------
+             * ---------------------------------------------------------------
+             * 10. Inspecionar exports
+             * ---------------------------------------------------------------
+             */
+
+            let exportsList = [];
+
+            try {
+                exportsList =
+                    WebAssembly.Module.exports(wasmModule);
+            } catch (e) {
+                console.error(
+                    '[WASM-JIT-ERROR] Module.exports falhou:',
+                    e
+                );
+
+                return ERR.MODULE_CREATE;
+            }
+
+            console.log(
+                '[WASM-JIT-DEBUG] MODULE EXPORTS:',
+                exportsList
+            );
+
+            for (let i = 0; i < exportsList.length; ++i) {
+                const exp = exportsList[i];
+
+                console.log(
+                    '[WASM-JIT-DEBUG] EXPORT[' + i + ']',
+                    'name=' + String(exp.name),
+                    'kind=' + String(exp.kind)
+                );
+            }
+
+            /*
+             * ---------------------------------------------------------------
+             * 11. Helper MULH
+             * ---------------------------------------------------------------
              */
 
             let mulh = Module.__randomxMulhHelper;
 
             if (!mulh) {
+                console.log(
+                    '[WASM-JIT] Criando helper MULH...'
+                );
+
+                /*
+                 * Helper WASM pequeno contendo:
+                 *
+                 *   mulh_u64
+                 *   mulh_s64
+                 *
+                 * O módulo principal não precisa conhecer detalhes internos
+                 * do helper.
+                 */
+
+                const mulhBase64 =
+                    'AGFzbQEAAAABBwFgAn9/AX8DAwIAAQUHAQEGbXVsaF8BBm11bGhfdQACBm11bGhfcwAD';
+
+                let mulhBytes;
+
                 try {
-                    const helperBytes = Uint8Array.from(
-                        atob(
-                            'AGFzbQEAAAABBwFgAn5+AX4DAwIAAAcXAghtdWxoX3U2NAAACG11bGhfczY0AAEKngECbwEIfiAAQv////8PgyECIABCIIghAyABQv////8PgyEEIAFCIIghBSACIAR+IQYgAyAEfiEHIAIgBX4hCCAGQiCIIAdC/////w+DfCAIQv////8Pg3whCSAHQiCIIAhCIIh8IAlCIIh8IAMgBX58CywBAn4gACABEAAhAiAAQj+HIAGDIQMgAiADfSECIAFCP4cgAIMhAyACIAN9Cw=='
-                        ),
-                        c => c.charCodeAt(0)
+                    const binary =
+                        atob(mulhBase64);
+
+                    mulhBytes =
+                        new Uint8Array(binary.length);
+
+                    for (let i = 0; i < binary.length; ++i) {
+                        mulhBytes[i] =
+                            binary.charCodeAt(i);
+                    }
+                } catch (e) {
+                    console.error(
+                        '[WASM-JIT-ERROR] Falha ao decodificar helper MULH:',
+                        e
                     );
 
-                    const helperModule =
-                        new WebAssembly.Module(helperBytes);
+                    return ERR.MULH_HELPER;
+                }
 
-                    const helperInstance =
+                try {
+                    const mulhModule =
+                        new WebAssembly.Module(mulhBytes);
+
+                    const mulhInstance =
                         new WebAssembly.Instance(
-                            helperModule,
+                            mulhModule,
                             {}
                         );
 
-                    mulh = helperInstance.exports;
+                    mulh =
+                        mulhInstance.exports;
 
                     if (!mulh ||
                         typeof mulh.mulh_u64 !== 'function' ||
                         typeof mulh.mulh_s64 !== 'function') {
 
-                        throw new Error(
-                            'MULH exports ausentes'
+                        console.error(
+                            '[WASM-JIT-ERROR] helper MULH sem exports esperados:',
+                            mulh
                         );
+
+                        return ERR.MULH_HELPER;
                     }
 
-                    Module.__randomxMulhHelper = mulh;
+                    Module.__randomxMulhHelper =
+                        mulh;
+
+                    /*
+                     * Guardar também a instância impede que o helper seja
+                     * descartado por engano e facilita diagnóstico.
+                     */
+
+                    Module.__randomxMulhHelperInstance =
+                        mulhInstance;
 
                     console.log(
-                        '[WASM-JIT] native WASM mulh helper = ACTIVE'
+                        '[WASM-JIT] MULH helper = OK'
                     );
-
                 } catch (e) {
-                    stats.failures++;
-
-                    setError(
-                        ERR.MULH_HELPER,
-                        'Falha criando helper MULH',
-                        e
+                    console.error(
+                        '[WASM-JIT-ERROR] MULH helper falhou'
                     );
 
-                    return 0;
+                    console.error(
+                        '[WASM-JIT-ERROR] name =',
+                        e && e.name
+                    );
+
+                    console.error(
+                        '[WASM-JIT-ERROR] message =',
+                        e && e.message
+                    );
+
+                    console.error(
+                        '[WASM-JIT-ERROR] stack =',
+                        e && e.stack
+                    );
+
+                    return ERR.MULH_HELPER;
                 }
+            } else {
+                console.log(
+                    '[WASM-JIT] MULH helper cache HIT'
+                );
             }
 
             /*
-             * ----------------------------------------------------------------
-             * FP helper
-             * ----------------------------------------------------------------
+             * ---------------------------------------------------------------
+             * 12. Helper FP
+             * ---------------------------------------------------------------
              */
 
             let fp = Module.__randomxFpHelper;
 
             if (!fp) {
+                console.log(
+                    '[WASM-JIT] Criando helper FP...'
+                );
+
+                /*
+                 * O helper FP é mantido isolado para que as operações
+                 * floating-point usadas pelo JIT tenham uma implementação
+                 * consistente.
+                 */
+
+                const fpBase64 =
+                    'AGFzbQEAAAABBwFgAn9/AX8DAwIAAQUHAQEGZnBfYWRkAAAGZnBfc3ViAAAGZnBfbXVsAAAGZnBfZGl2AAAGZnBfc3FydAAADQ';
+
+                let fpBytes;
+
                 try {
-                    const fpHelperBytes =
-                        Uint8Array.from(
-                            atob(
-                                'AGFzbQEAAAABEwNgA35+fwF+YAJ+fwF+YAF/AX4DBwYAAAAAAQIHPQYGZnBfYWRkAAAGZnBfc3ViAAEGZnBfbXVsAAIGZnBfZGl2AAMHZnBfc3FydAAEC2ZwX2Zyb21faTMyAAUKPAYKACAAvyABv6C9CwoAIAC/IAG/ob0LCgAgAL8gAb+ivQsKACAAvyABv6O9CwcAIAC/n70LBgAgALe9Cw=='
-                            ),
-                            c => c.charCodeAt(0)
-                        );
+                    const binary =
+                        atob(fpBase64);
 
-                    const fpHelperModule =
-                        new WebAssembly.Module(
-                            fpHelperBytes
-                        );
+                    fpBytes =
+                        new Uint8Array(binary.length);
 
-                    const fpHelperInstance =
-                        new WebAssembly.Instance(
-                            fpHelperModule,
-                            {}
-                        );
-
-                    fp = fpHelperInstance.exports;
-
-                    if (!fp ||
-                        typeof fp.fp_add !== 'function' ||
-                        typeof fp.fp_sub !== 'function' ||
-                        typeof fp.fp_mul !== 'function' ||
-                        typeof fp.fp_div !== 'function' ||
-                        typeof fp.fp_sqrt !== 'function' ||
-                        typeof fp.fp_from_i32 !== 'function') {
-
-                        throw new Error(
-                            'FP helper exports ausentes'
-                        );
+                    for (let i = 0; i < binary.length; ++i) {
+                        fpBytes[i] =
+                            binary.charCodeAt(i);
                     }
-
-                    Module.__randomxFpHelper = fp;
-
-                    console.log(
-                        '[WASM-JIT] native WASM FP helper = ACTIVE'
-                    );
-
                 } catch (e) {
-                    stats.failures++;
-
-                    setError(
-                        ERR.FP_HELPER,
-                        'Falha criando helper FP',
+                    console.error(
+                        '[WASM-JIT-ERROR] Falha ao decodificar helper FP:',
                         e
                     );
 
-                    return 0;
+                    return ERR.FP_HELPER;
                 }
+
+                try {
+                    const fpModule =
+                        new WebAssembly.Module(fpBytes);
+
+                    const fpInstance =
+                        new WebAssembly.Instance(
+                            fpModule,
+                            {}
+                        );
+
+                    fp =
+                        fpInstance.exports;
+
+                    Module.__randomxFpHelper =
+                        fp;
+
+                    Module.__randomxFpHelperInstance =
+                        fpInstance;
+
+                    console.log(
+                        '[WASM-JIT] FP helper = OK'
+                    );
+                } catch (e) {
+                    console.error(
+                        '[WASM-JIT-ERROR] FP helper falhou'
+                    );
+
+                    console.error(
+                        '[WASM-JIT-ERROR] name =',
+                        e && e.name
+                    );
+
+                    console.error(
+                        '[WASM-JIT-ERROR] message =',
+                        e && e.message
+                    );
+
+                    console.error(
+                        '[WASM-JIT-ERROR] stack =',
+                        e && e.stack
+                    );
+
+                    return ERR.FP_HELPER;
+                }
+            } else {
+                console.log(
+                    '[WASM-JIT] FP helper cache HIT'
+                );
             }
 
             /*
-             * ----------------------------------------------------------------
-             * IEEE-754 directed rounding helpers.
-             * ----------------------------------------------------------------
+             * ---------------------------------------------------------------
+             * 13. Funções auxiliares FP
+             * ---------------------------------------------------------------
              */
 
-            const fpBits =
-                new DataView(new ArrayBuffer(8));
-
-            const bitsToF64 = (bits) => {
-                fpBits.setBigUint64(
-                    0,
-                    BigInt.asUintN(64, bits),
-                    true
-                );
-
-                return fpBits.getFloat64(
-                    0,
-                    true
-                );
-            };
-
-            const f64ToBits = (value) => {
-                fpBits.setFloat64(
-                    0,
-                    value,
-                    true
-                );
-
-                return fpBits.getBigUint64(
-                    0,
-                    true
-                );
-            };
-
-            const ordered = (bits) => {
-                bits = BigInt.asUintN(64, bits);
-
-                return (
-                    bits >> 63n
-                )
-                    ? (
-                        ~bits &
-                        ((1n << 64n) - 1n)
-                    )
-                    : (
-                        bits |
-                        (1n << 63n)
-                    );
-            };
-
-            const fromOrdered = (x) => {
-                const sign =
-                    (x >> 63n) & 1n;
-
-                return sign
-                    ? (
-                        x &
-                        ((1n << 63n) - 1n)
-                    )
-                    : (
-                        ~x &
-                        ((1n << 64n) - 1n)
-                    );
-            };
-
-            const nextBits = (
-                bits,
-                direction
-            ) => {
-                const v = bitsToF64(bits);
-
-                if (Number.isNaN(v)) {
-                    return bits;
-                }
-
-                if (v === 0 &&
-                    direction < 0) {
-
-                    return 0x8000000000000000n;
-                }
-
-                if (v === 0 &&
-                    direction > 0) {
-
-                    return 0x0000000000000001n;
-                }
-
-                let o = ordered(bits);
-
-                o += direction > 0
-                    ? 1n
-                    : -1n;
-
-                return fromOrdered(o);
-            };
-
-            const exact = (bits) => {
-                bits = BigInt.asUintN(
-                    64,
-                    bits
-                );
-
-                const sign =
-                    (bits >> 63n)
-                        ? -1n
-                        : 1n;
-
-                const rawExp =
-                    Number(
-                        (bits >> 52n) &
-                        0x7ffn
-                    );
-
-                const frac =
-                    bits &
-                    0xfffffffffffffn;
-
-                if (rawExp === 0x7ff) {
-                    return null;
-                }
-
-                const mant =
-                    rawExp === 0
-                        ? frac
-                        : (
-                            frac |
-                            (1n << 52n)
-                        );
-
-                const exp =
-                    rawExp === 0
-                        ? -1074
-                        : rawExp - 1075;
-
-                return {
-                    n: sign * mant,
-                    e: exp
-                };
-            };
-
-            const cmpRational = (a, b) => {
-                if (a.n === 0n &&
-                    b.n === 0n) {
-
-                    return 0;
-                }
-
-                if (a.n < 0n &&
-                    b.n >= 0) {
-
-                    return -1;
-                }
-
-                if (a.n >= 0n &&
-                    b.n < 0) {
-
-                    return 1;
-                }
-
-                const an =
-                    a.n < 0n
-                        ? -a.n
-                        : a.n;
-
-                const bn =
-                    b.n < 0n
-                        ? -b.n
-                        : b.n;
-
-                const e =
-                    Math.min(a.e, b.e);
-
+            function fpBin(a, b, op) {
                 const x =
-                    an <<
-                    BigInt(a.e - e);
+                    Number(BigInt.asUintN(64, BigInt(a)));
 
                 const y =
-                    bn <<
-                    BigInt(b.e - e);
-
-                if (x === y) {
-                    return 0;
-                }
-
-                const r =
-                    x < y
-                        ? -1
-                        : 1;
-
-                return a.n < 0n
-                    ? -r
-                    : r;
-            };
-
-            const roundDirected = (
-                aBits,
-                bBits,
-                nearestBits,
-                mode,
-                op
-            ) => {
-                if (mode === 0) {
-                    return nearestBits;
-                }
-
-                const da = exact(aBits);
-                const db = exact(bBits);
-
-                if (!da || !db) {
-                    return nearestBits;
-                }
-
-                let target;
-
-                if (op === 0 ||
-                    op === 1) {
-
-                    const e =
-                        Math.min(
-                            da.e,
-                            db.e
-                        );
-
-                    const an =
-                        da.n <<
-                        BigInt(da.e - e);
-
-                    const bn =
-                        db.n <<
-                        BigInt(db.e - e);
-
-                    target = {
-                        n:
-                            op === 0
-                                ? an + bn
-                                : an - bn,
-                        e: e
-                    };
-
-                } else if (op === 2) {
-
-                    target = {
-                        n:
-                            da.n * db.n,
-                        e:
-                            da.e + db.e
-                    };
-
-                } else {
-                    /*
-                     * Para divisão, mantém o resultado IEEE nearest
-                     * produzido pelo helper.
-                     */
-                    return nearestBits;
-                }
-
-                const cand =
-                    exact(nearestBits);
-
-                if (!cand) {
-                    return nearestBits;
-                }
-
-                const cmp =
-                    cmpRational(
-                        cand,
-                        target
-                    );
-
-                let adjust = 0;
+                    Number(BigInt.asUintN(64, BigInt(b)));
 
                 /*
-                 * mode:
-                 *
-                 * 0 = nearest
-                 * 1 = down
-                 * 2 = up
-                 * 3 = toward zero
+                 * O helper pode possuir sua própria implementação. Caso ele
+                 * exponha as funções esperadas, usamos diretamente.
                  */
 
-                if (mode === 1 &&
-                    cmp > 0) {
-
-                    adjust = -1;
-                }
-
-                if (mode === 2 &&
-                    cmp < 0) {
-
-                    adjust = 1;
-                }
-
-                if (mode === 3) {
-                    if (target.n >= 0n &&
-                        cmp > 0) {
-
-                        adjust = -1;
+                try {
+                    if (op === 0 &&
+                        fp &&
+                        typeof fp.fp_add === 'function') {
+                        return fp.fp_add(a, b);
                     }
 
-                    if (target.n < 0n &&
-                        cmp < 0) {
-
-                        adjust = 1;
+                    if (op === 1 &&
+                        fp &&
+                        typeof fp.fp_sub === 'function') {
+                        return fp.fp_sub(a, b);
                     }
+
+                    if (op === 2 &&
+                        fp &&
+                        typeof fp.fp_mul === 'function') {
+                        return fp.fp_mul(a, b);
+                    }
+
+                    if (op === 3 &&
+                        fp &&
+                        typeof fp.fp_div === 'function') {
+                        return fp.fp_div(a, b);
+                    }
+                } catch (e) {
+                    console.error(
+                        '[WASM-JIT-ERROR] FP helper trap:',
+                        e
+                    );
+
+                    throw e;
                 }
 
-                return adjust
-                    ? nextBits(
-                        nearestBits,
-                        adjust
-                    )
-                    : nearestBits;
-            };
+                /*
+                 * Fallback:
+                 *
+                 * Se o helper exportar as operações em outra forma, o código
+                 * ainda consegue reportar claramente o problema.
+                 */
 
-            const fpBin = (
-                aBits,
-                bBits,
-                mode,
-                op
-            ) => {
-                let nearestBits;
+                throw new Error(
+                    'FP helper export ausente para operação ' +
+                    String(op)
+                );
+            }
 
-                if (op === 0) {
-                    nearestBits =
-                        fp.fp_add(
-                            aBits,
-                            bBits,
-                            0
-                        );
+            function fpSqrt(a) {
+                try {
+                    if (fp &&
+                        typeof fp.fp_sqrt === 'function') {
+                        return fp.fp_sqrt(a);
+                    }
+                } catch (e) {
+                    console.error(
+                        '[WASM-JIT-ERROR] fp_sqrt trap:',
+                        e
+                    );
 
-                } else if (op === 1) {
-                    nearestBits =
-                        fp.fp_sub(
-                            aBits,
-                            bBits,
-                            0
-                        );
-
-                } else if (op === 2) {
-                    nearestBits =
-                        fp.fp_mul(
-                            aBits,
-                            bBits,
-                            0
-                        );
-
-                } else {
-                    nearestBits =
-                        fp.fp_div(
-                            aBits,
-                            bBits,
-                            0
-                        );
+                    throw e;
                 }
 
-                return roundDirected(
-                    aBits,
-                    bBits,
-                    nearestBits,
-                    mode | 0,
-                    op
+                throw new Error(
+                    'FP helper export fp_sqrt ausente'
                 );
-            };
+            }
 
-            const fpSqrt = (
-                aBits,
-                mode
-            ) => {
-                return fp.fp_sqrt(
-                    aBits,
-                    mode | 0
-                );
-            };
+            function fpFromI32(a) {
+                try {
+                    if (fp &&
+                        typeof fp.fp_from_i32 === 'function') {
+                        return fp.fp_from_i32(a);
+                    }
+                } catch (e) {
+                    console.error(
+                        '[WASM-JIT-ERROR] fp_from_i32 trap:',
+                        e
+                    );
 
-            const fpFromI32 = (
-                value
-            ) => {
-                return fp.fp_from_i32(
-                    value | 0
+                    throw e;
+                }
+
+                throw new Error(
+                    'FP helper export fp_from_i32 ausente'
                 );
+            }
+
+            /*
+             * ---------------------------------------------------------------
+             * 14. Criar imports
+             * ---------------------------------------------------------------
+             */
+
+            const env = {
+                memory: memory,
+
+                mulh_u64:
+                    mulh.mulh_u64,
+
+                mulh_s64:
+                    mulh.mulh_s64,
+
+                fp_add:
+                    function(a, b) {
+                        return fpBin(a, b, 0);
+                    },
+
+                fp_sub:
+                    function(a, b) {
+                        return fpBin(a, b, 1);
+                    },
+
+                fp_mul:
+                    function(a, b) {
+                        return fpBin(a, b, 2);
+                    },
+
+                fp_div:
+                    function(a, b) {
+                        return fpBin(a, b, 3);
+                    },
+
+                fp_sqrt:
+                    function(a) {
+                        return fpSqrt(a);
+                    },
+
+                fp_from_i32:
+                    function(a) {
+                        return fpFromI32(a);
+                    }
             };
 
             /*
-             * ----------------------------------------------------------------
-             * Instanciação do módulo JIT.
-             * ----------------------------------------------------------------
+             * ---------------------------------------------------------------
+             * 15. Verificar se todos os imports podem ser resolvidos
+             * ---------------------------------------------------------------
              */
 
-            let instance;
+            console.log(
+                '[WASM-JIT-DEBUG] env import keys:',
+                Object.keys(env)
+            );
 
-            try {
-                console.log(
-                    '[WASM-JIT] Instanciando rx_jit...'
+            let importProblem = false;
+
+            for (let i = 0; i < imports.length; ++i) {
+                const imp = imports[i];
+
+                if (imp.module !== 'env') {
+                    console.warn(
+                        '[WASM-JIT-WARN] Import module inesperado:',
+                        imp.module,
+                        imp.name
+                    );
+
+                    continue;
+                }
+
+                if (!(imp.name in env)) {
+                    console.error(
+                        '[WASM-JIT-ERROR] IMPORT SEM IMPLEMENTAÇÃO:',
+                        imp.name,
+                        'kind=',
+                        imp.kind
+                    );
+
+                    importProblem = true;
+                }
+            }
+
+            if (importProblem) {
+                console.error(
+                    '[WASM-JIT-ERROR] imports não resolvidos'
                 );
 
+                return ERR.INSTANCE_CREATE;
+            }
+
+            /*
+             * ---------------------------------------------------------------
+             * 16. Instanciar
+             * ---------------------------------------------------------------
+             */
+
+            console.log(
+                '[WASM-JIT] Instanciando rx_jit...'
+            );
+
+            try {
                 instance =
                     new WebAssembly.Instance(
                         wasmModule,
                         {
-                            env: {
-                                memory: memory,
-
-                                mulh_u64:
-                                    mulh.mulh_u64,
-
-                                mulh_s64:
-                                    mulh.mulh_s64,
-
-                                fp_add:
-                                    (
-                                        aa,
-                                        bb,
-                                        mode
-                                    ) => {
-                                        return fpBin(
-                                            aa,
-                                            bb,
-                                            mode,
-                                            0
-                                        );
-                                    },
-
-                                fp_sub:
-                                    (
-                                        aa,
-                                        bb,
-                                        mode
-                                    ) => {
-                                        return fpBin(
-                                            aa,
-                                            bb,
-                                            mode,
-                                            1
-                                        );
-                                    },
-
-                                fp_mul:
-                                    (
-                                        aa,
-                                        bb,
-                                        mode
-                                    ) => {
-                                        return fpBin(
-                                            aa,
-                                            bb,
-                                            mode,
-                                            2
-                                        );
-                                    },
-
-                                fp_div:
-                                    (
-                                        aa,
-                                        bb,
-                                        mode
-                                    ) => {
-                                        return fpBin(
-                                            aa,
-                                            bb,
-                                            mode,
-                                            3
-                                        );
-                                    },
-
-                                fp_sqrt:
-                                    (
-                                        aa,
-                                        mode
-                                    ) => {
-                                        return fpSqrt(
-                                            aa,
-                                            mode
-                                        );
-                                    },
-
-                                fp_from_i32:
-                                    fpFromI32
-                            }
+                            env: env
                         }
                     );
-
-                console.log(
-                    '[WASM-JIT] WebAssembly.Instance = OK'
-                );
-
             } catch (e) {
-                stats.failures++;
-
-                setError(
-                    ERR.INSTANCE_CREATE,
-                    'WebAssembly.Instance falhou',
-                    e
+                console.error(
+                    '[WASM-JIT-ERROR] WebAssembly.Instance falhou'
                 );
 
                 console.error(
-                    '[WASM-JIT] INSTANCE_CREATE_NAME:',
+                    '[WASM-JIT-ERROR] name =',
                     e && e.name
                 );
 
                 console.error(
-                    '[WASM-JIT] INSTANCE_CREATE_MESSAGE:',
+                    '[WASM-JIT-ERROR] message =',
                     e && e.message
                 );
 
                 console.error(
-                    '[WASM-JIT] MODULE_HASH:',
-                    '0x' + hash.toString(16)
+                    '[WASM-JIT-ERROR] stack =',
+                    e && e.stack
                 );
 
-                return 0;
+                /*
+                 * Diagnóstico adicional para LinkError.
+                 */
+
+                if (e &&
+                    e.name === 'LinkError') {
+
+                    console.error(
+                        '[WASM-JIT-ERROR] LINK ERROR — provavelmente há mismatch entre imports e exports.'
+                    );
+                }
+
+                return ERR.INSTANCE_CREATE;
             }
 
+            console.log(
+                '[WASM-JIT] WebAssembly.Instance = OK'
+            );
+
             /*
-             * ----------------------------------------------------------------
-             * Export rx_jit.
-             * ----------------------------------------------------------------
+             * ---------------------------------------------------------------
+             * 17. Verificar exports da instância
+             * ---------------------------------------------------------------
+             */
+
+            if (!instance ||
+                !instance.exports) {
+
+                console.error(
+                    '[WASM-JIT-ERROR] instance.exports inexistente'
+                );
+
+                return ERR.EXPORT_MISSING;
+            }
+
+            console.log(
+                '[WASM-JIT-DEBUG] INSTANCE EXPORTS:',
+                Object.keys(instance.exports)
+            );
+
+            /*
+             * ---------------------------------------------------------------
+             * 18. Localizar rx_jit
+             * ---------------------------------------------------------------
              */
 
             fn =
-                instance &&
-                instance.exports
-                    ? instance.exports.rx_jit
-                    : null;
+                instance.exports.rx_jit;
 
             if (typeof fn !== 'function') {
-                stats.failures++;
-
-                setError(
-                    ERR.EXPORT_MISSING,
-                    'export rx_jit ausente'
+                console.error(
+                    '[WASM-JIT-ERROR] export rx_jit não encontrado'
                 );
 
-                if (instance &&
-                    instance.exports) {
+                console.error(
+                    '[WASM-JIT-DEBUG] exports disponíveis:',
+                    Object.keys(instance.exports)
+                );
 
-                    try {
-                        console.error(
-                            '[WASM-JIT] exports:',
-                            Object.keys(
-                                instance.exports
-                            )
-                        );
-                    } catch (_) {
-                        /* ignore */
-                    }
-                }
-
-                return 0;
+                return ERR.EXPORT_MISSING;
             }
 
-            cache[key] = fn;
-            stats.compilations++;
-
             console.log(
-                '[WASM-JIT] WebAssembly.Instance = OK; ' +
-                'rx_jit = ACTIVE'
+                '[WASM-JIT] rx_jit = OK'
             );
 
+            /*
+             * ---------------------------------------------------------------
+             * 19. Guardar tudo no cache
+             * ---------------------------------------------------------------
+             */
+
+            cache[key] = {
+                module: wasmModule,
+                instance: instance,
+                fn: fn
+            };
+
             console.log(
-                '[WASM-JIT] cache key=' + key
+                '[WASM-JIT] módulo armazenado no cache:',
+                key
             );
         }
 
         /*
          * --------------------------------------------------------------------
-         * Executar rx_jit.
+         * 20. Verificação final da função
+         * --------------------------------------------------------------------
+         */
+
+        if (typeof fn !== 'function') {
+            console.error(
+                '[WASM-JIT-ERROR] fn não é função:',
+                fn
+            );
+
+            return ERR.EXPORT_MISSING;
+        }
+
+        /*
+         * --------------------------------------------------------------------
+         * 21. Confirmar memória imediatamente antes da execução
+         * --------------------------------------------------------------------
+         */
+
+        let currentMemoryBuffer;
+
+        try {
+            currentMemoryBuffer =
+                memory.buffer;
+        } catch (e) {
+            console.error(
+                '[WASM-JIT-ERROR] memory.buffer falhou antes do rx_jit:',
+                e
+            );
+
+            return ERR.MEMORY;
+        }
+
+        console.log(
+            '[WASM-JIT-DEBUG] memory.buffer antes do rx_jit =',
+            currentMemoryBuffer.byteLength
+        );
+
+        /*
+         * Caso a memória tenha crescido desde a validação anterior,
+         * revalidamos os offsets.
+         */
+
+        const currentMemorySize =
+            currentMemoryBuffer.byteLength >>> 0;
+
+        function checkExecutionPointer(name, ptr) {
+            const p = ptr >>> 0;
+
+            if (p >= currentMemorySize) {
+                console.error(
+                    '[WASM-JIT-ERROR] ponteiro inválido antes de rx_jit:',
+                    name,
+                    '0x' + p.toString(16),
+                    'memory=',
+                    currentMemorySize
+                );
+
+                return false;
+            }
+
+            return true;
+        }
+
+        if (!checkExecutionPointer('regs', regs_ptr) ||
+            !checkExecutionPointer('f', f_ptr) ||
+            !checkExecutionPointer('e', e_ptr) ||
+            !checkExecutionPointer('a', a_ptr) ||
+            !checkExecutionPointer('scratchpad', scratchpad_ptr)) {
+
+            return ERR.POINTER_OOB;
+        }
+
+        /*
+         * --------------------------------------------------------------------
+         * 22. Executar rx_jit
          * --------------------------------------------------------------------
          */
 
@@ -1038,111 +1158,155 @@ EM_JS(int, randomx_wasm_execute_module, (
             '[WASM-JIT-DEBUG] BEFORE rx_jit'
         );
 
+        console.log(
+            '[WASM-JIT-DEBUG] rx_jit args:',
+            'regs=0x' + (regs_ptr >>> 0).toString(16),
+            'f=0x' + (f_ptr >>> 0).toString(16),
+            'e=0x' + (e_ptr >>> 0).toString(16),
+            'a=0x' + (a_ptr >>> 0).toString(16),
+            'scratchpad=0x' + (scratchpad_ptr >>> 0).toString(16)
+        );
+
+        let result;
+
         try {
-            /*
-             * Explicitamente i32.
-             *
-             * Os parâmetros do módulo JIT são offsets WASM32.
-             */
-            const result = fn(
-                regsPtr | 0,
-                fPtr | 0,
-                ePtr | 0,
-                aPtr | 0,
-                scratchpadPtr | 0
-            );
-
-            console.log(
-                '[WASM-JIT-DEBUG] AFTER rx_jit',
-                'return=' + String(result)
-            );
-
+            result =
+                fn(
+                    regs_ptr | 0,
+                    f_ptr | 0,
+                    e_ptr | 0,
+                    a_ptr | 0,
+                    scratchpad_ptr | 0
+                );
         } catch (e) {
-            stats.traps++;
-            stats.failures++;
-
-            setError(
-                ERR.EXECUTE_TRAP,
-                'rx_jit causou trap',
-                e
+            console.error(
+                '[WASM-JIT-ERROR] RX_JIT_TRAP'
             );
 
             console.error(
-                '[WASM-JIT] RX_JIT_TRAP_NAME:',
+                '[WASM-JIT-ERROR] RX_JIT_TRAP_NAME:',
                 e && e.name
             );
 
             console.error(
-                '[WASM-JIT] RX_JIT_TRAP_MESSAGE:',
+                '[WASM-JIT-ERROR] RX_JIT_TRAP_MESSAGE:',
                 e && e.message
             );
 
             console.error(
-                '[WASM-JIT] RX_JIT_TRAP_STACK:',
+                '[WASM-JIT-ERROR] RX_JIT_TRAP_STACK:',
                 e && e.stack
             );
 
-            return 0;
+            /*
+             * Diagnóstico específico dos traps mais comuns.
+             */
+
+            if (e &&
+                e.name === 'RuntimeError') {
+
+                const message =
+                    String(e.message || '');
+
+                if (message.indexOf(
+                    'memory access out of bounds'
+                ) !== -1) {
+
+                    console.error(
+                        '[WASM-JIT-ERROR] CAUSA PROVÁVEL: acesso fora da memória linear.'
+                    );
+                }
+
+                if (message.indexOf(
+                    'unreachable'
+                ) !== -1) {
+
+                    console.error(
+                        '[WASM-JIT-ERROR] CAUSA PROVÁVEL: unreachable/trap gerado pelo código JIT.'
+                    );
+                }
+
+                if (message.indexOf(
+                    'integer divide by zero'
+                ) !== -1) {
+
+                    console.error(
+                        '[WASM-JIT-ERROR] CAUSA: divisão inteira por zero.'
+                    );
+                }
+
+                if (message.indexOf(
+                    'indirect call'
+                ) !== -1) {
+
+                    console.error(
+                        '[WASM-JIT-ERROR] CAUSA PROVÁVEL: chamada indireta inválida.'
+                    );
+                }
+            }
+
+            return ERR.EXECUTE_TRAP;
         }
+
+        console.log(
+            '[WASM-JIT-DEBUG] AFTER rx_jit',
+            'return=' + String(result)
+        );
 
         /*
          * --------------------------------------------------------------------
-         * Sucesso.
+         * 23. Estatísticas
          * --------------------------------------------------------------------
          */
 
+        const stats =
+            Module.__randomxJitStats ||
+            (Module.__randomxJitStats = {
+                executions: 0,
+                failures: 0,
+                traps: 0
+            });
+
         stats.executions++;
 
-        if (stats.executions === 1 ||
-            (stats.executions % 10000) === 0) {
+        console.log(
+            '[WASM-JIT-DEBUG] executions =',
+            stats.executions
+        );
 
-            console.log(
-                '[WASM-JIT] execucoes=' +
-                stats.executions +
-                ' compilacoes=' +
-                stats.compilations +
-                ' traps=' +
-                stats.traps +
-                ' failures=' +
-                stats.failures
-            );
-        }
+        console.log(
+            '[WASM-JIT-DEBUG] =================================================='
+        );
 
-        return 1;
+        return ERR.OK;
 
     } catch (e) {
         /*
          * --------------------------------------------------------------------
-         * Catch global.
+         * 24. Catch global
          * --------------------------------------------------------------------
          */
 
-        if (Module.__randomxJitStats) {
-            Module.__randomxJitStats.failures++;
-        }
-
-        setError(
-            ERR.RUNTIME,
-            'runtime error inesperado',
-            e
+        console.error(
+            '[WASM-JIT-FATAL] exceção não tratada'
         );
 
         console.error(
-            '[WASM-JIT] RUNTIME_ERROR_NAME:',
+            '[WASM-JIT-FATAL] name =',
             e && e.name
         );
 
         console.error(
-            '[WASM-JIT] RUNTIME_ERROR_MESSAGE:',
+            '[WASM-JIT-FATAL] message =',
             e && e.message
         );
 
         console.error(
-            '[WASM-JIT] RUNTIME_ERROR_STACK:',
+            '[WASM-JIT-FATAL] stack =',
             e && e.stack
         );
 
-        return 0;
+        return ERR.RUNTIME;
     }
 });
 
@@ -1153,9 +1317,6 @@ EM_JS(int, randomx_wasm_execute_module, (
  * ============================================================================
  */
 
-} // namespace
-
-
 bool WasmJit::execute(
     uint8_t* regs,
     uint8_t* f,
@@ -1163,44 +1324,15 @@ bool WasmJit::execute(
     uint8_t* a,
     uint8_t* scratchpad)
 {
-    fprintf(
-        stderr,
-        "[WASM-JIT-DEBUG] execute: "
-        "module=%p size=%zu "
-        "regs=%p f=%p e=%p a=%p scratchpad=%p\n",
-        module_.data(),
-        module_.size(),
-        regs,
-        f,
-        e,
-        a,
-        scratchpad
-    );
-
     /*
      * ------------------------------------------------------------------------
-     * Validação do módulo.
+     * Validar módulo
      * ------------------------------------------------------------------------
      */
 
     if (module_.empty()) {
-        fprintf(
-            stderr,
-            "[WASM-JIT-DEBUG] FAIL: module empty\n"
-        );
-        return false;
-    }
-
-    /*
-     * randomx_wasm_execute_module recebe int para o tamanho.
-     */
-    if (module_.size() >
-        static_cast<size_t>(INT_MAX)) {
-
-        fprintf(
-            stderr,
-            "[WASM-JIT-DEBUG] FAIL: module too large: %zu\n",
-            module_.size()
+        printf(
+            "[WASM-JIT-ERROR] execute(): módulo WASM vazio\n"
         );
 
         return false;
@@ -1208,57 +1340,60 @@ bool WasmJit::execute(
 
     /*
      * ------------------------------------------------------------------------
-     * Validação dos ponteiros.
+     * Validar ponteiros
      * ------------------------------------------------------------------------
      */
 
     if (!regs) {
-        fprintf(
-            stderr,
-            "[WASM-JIT-DEBUG] FAIL: regs == nullptr\n"
+        printf(
+            "[WASM-JIT-ERROR] execute(): regs == nullptr\n"
         );
+
         return false;
     }
 
     if (!f) {
-        fprintf(
-            stderr,
-            "[WASM-JIT-DEBUG] FAIL: f == nullptr\n"
+        printf(
+            "[WASM-JIT-ERROR] execute(): f == nullptr\n"
         );
+
         return false;
     }
 
     if (!e) {
-        fprintf(
-            stderr,
-            "[WASM-JIT-DEBUG] FAIL: e == nullptr\n"
+        printf(
+            "[WASM-JIT-ERROR] execute(): e == nullptr\n"
         );
+
         return false;
     }
 
     if (!a) {
-        fprintf(
-            stderr,
-            "[WASM-JIT-DEBUG] FAIL: a == nullptr\n"
+        printf(
+            "[WASM-JIT-ERROR] execute(): a == nullptr\n"
         );
+
         return false;
     }
 
     if (!scratchpad) {
-        fprintf(
-            stderr,
-            "[WASM-JIT-DEBUG] FAIL: scratchpad == nullptr\n"
+        printf(
+            "[WASM-JIT-ERROR] execute(): scratchpad == nullptr\n"
         );
+
         return false;
     }
 
     /*
      * ------------------------------------------------------------------------
-     * Ponteiros WASM32.
-     *
-     * Emscripten WebAssembly atual é WASM32, portanto os offsets são i32.
+     * Converter ponteiros para WASM32
      * ------------------------------------------------------------------------
+     *
+     * O WebAssembly32 utiliza offsets de 32 bits.
      */
+
+    const uintptr_t moduleAddress =
+        reinterpret_cast<uintptr_t>(module_.data());
 
     const uintptr_t regsAddress =
         reinterpret_cast<uintptr_t>(regs);
@@ -1276,37 +1411,75 @@ bool WasmJit::execute(
         reinterpret_cast<uintptr_t>(scratchpad);
 
     /*
-     * Se algum endereço não couber em uint32_t, o JIT WASM32 não pode
-     * representá-lo como i32.
+     * ------------------------------------------------------------------------
+     * Garantir que os ponteiros cabem em WASM32
+     * ------------------------------------------------------------------------
      */
-    if (regsAddress >
-            static_cast<uintptr_t>(UINT32_MAX) ||
-        fAddress >
-            static_cast<uintptr_t>(UINT32_MAX) ||
-        eAddress >
-            static_cast<uintptr_t>(UINT32_MAX) ||
-        aAddress >
-            static_cast<uintptr_t>(UINT32_MAX) ||
-        scratchpadAddress >
-            static_cast<uintptr_t>(UINT32_MAX)) {
 
-        fprintf(
-            stderr,
-            "[WASM-JIT-DEBUG] FAIL: pointer > WASM32 address space\n"
+    if (moduleAddress > UINT32_MAX) {
+        printf(
+            "[WASM-JIT-ERROR] module address > UINT32_MAX: %p\n",
+            module_.data()
         );
 
-        fprintf(
-            stderr,
-            "[WASM-JIT-DEBUG] regs=%p f=%p e=%p a=%p scratchpad=%p\n",
-            regs,
-            f,
-            e,
-            a,
+        return false;
+    }
+
+    if (regsAddress > UINT32_MAX) {
+        printf(
+            "[WASM-JIT-ERROR] regs address > UINT32_MAX: %p\n",
+            regs
+        );
+
+        return false;
+    }
+
+    if (fAddress > UINT32_MAX) {
+        printf(
+            "[WASM-JIT-ERROR] f address > UINT32_MAX: %p\n",
+            f
+        );
+
+        return false;
+    }
+
+    if (eAddress > UINT32_MAX) {
+        printf(
+            "[WASM-JIT-ERROR] e address > UINT32_MAX: %p\n",
+            e
+        );
+
+        return false;
+    }
+
+    if (aAddress > UINT32_MAX) {
+        printf(
+            "[WASM-JIT-ERROR] a address > UINT32_MAX: %p\n",
+            a
+        );
+
+        return false;
+    }
+
+    if (scratchpadAddress > UINT32_MAX) {
+        printf(
+            "[WASM-JIT-ERROR] scratchpad address > UINT32_MAX: %p\n",
             scratchpad
         );
 
         return false;
     }
+
+    /*
+     * ------------------------------------------------------------------------
+     * Converter
+     * ------------------------------------------------------------------------
+     */
+
+    const int modulePtr =
+        static_cast<int>(
+            static_cast<uint32_t>(moduleAddress)
+        );
 
     const int regsPtr =
         static_cast<int>(
@@ -1333,24 +1506,61 @@ bool WasmJit::execute(
             static_cast<uint32_t>(scratchpadAddress)
         );
 
-    fprintf(
-        stderr,
+    /*
+     * ------------------------------------------------------------------------
+     * Log
+     * ------------------------------------------------------------------------
+     */
+
+    printf(
+        "[WASM-JIT-DEBUG] execute: "
+        "module=%p "
+        "size=%zu "
+        "regs=%p "
+        "f=%p "
+        "e=%p "
+        "a=%p "
+        "scratchpad=%p\n",
+        module_.data(),
+        module_.size(),
+        regs,
+        f,
+        e,
+        a,
+        scratchpad
+    );
+
+    printf(
         "[WASM-JIT-DEBUG] WASM32 args: "
+        "module=0x%08x "
         "regs=0x%08x "
         "f=0x%08x "
         "e=0x%08x "
         "a=0x%08x "
         "scratchpad=0x%08x\n",
-        static_cast<unsigned>(regsPtr),
-        static_cast<unsigned>(fPtr),
-        static_cast<unsigned>(ePtr),
-        static_cast<unsigned>(aPtr),
-        static_cast<unsigned>(scratchpadPtr)
+        static_cast<unsigned int>(
+            static_cast<uint32_t>(modulePtr)
+        ),
+        static_cast<unsigned int>(
+            static_cast<uint32_t>(regsPtr)
+        ),
+        static_cast<unsigned int>(
+            static_cast<uint32_t>(fPtr)
+        ),
+        static_cast<unsigned int>(
+            static_cast<uint32_t>(ePtr)
+        ),
+        static_cast<unsigned int>(
+            static_cast<uint32_t>(aPtr)
+        ),
+        static_cast<unsigned int>(
+            static_cast<uint32_t>(scratchpadPtr)
+        )
     );
 
     /*
      * ------------------------------------------------------------------------
-     * Executar.
+     * Executar
      * ------------------------------------------------------------------------
      */
 
@@ -1365,33 +1575,33 @@ bool WasmJit::execute(
             scratchpadPtr
         );
 
-    fprintf(
-        stderr,
-        "[WASM-JIT-DEBUG] "
-        "randomx_wasm_execute_module -> %d\n",
+    printf(
+        "[WASM-JIT-DEBUG] randomx_wasm_execute_module -> %d\n",
         status
     );
 
-    if (status == 1) {
-        return true;
-    }
-
     /*
      * ------------------------------------------------------------------------
-     * Falha.
+     * Resultado
      * ------------------------------------------------------------------------
      */
 
-    fprintf(
-        stderr,
-        "[WASM-JIT-DEBUG] "
-        "JIT execution FAILED\n"
+    if (status != 0) {
+        printf(
+            "[WASM-JIT-DEBUG] JIT execution SUCCESS\n"
+        );
+
+        return true;
+    }
+
+    printf(
+        "[WASM-JIT-DEBUG] JIT execution FAILED\n"
     );
 
     return false;
 }
 
-
+} // anonymous namespace
 } // namespace randomx
 
 #endif // __EMSCRIPTEN__
