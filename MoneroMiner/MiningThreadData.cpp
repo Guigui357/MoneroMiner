@@ -116,8 +116,9 @@ bool MiningThreadData::calculateHashAndCheckTarget(
         hashOut.resize(RANDOMX_HASH_SIZE);
 
     randomx_calculate_hash(vm, blob.data(), blob.size(), hashOut.data());
-
-    totalHashes++;
+    
+    incrementHashCount();
+    totalHashes.fetch_add(1, std::memory_order_relaxed);
 
     uint256_t hashValue(hashOut.data());
     uint256_t targetValue(targetBytes.data());
