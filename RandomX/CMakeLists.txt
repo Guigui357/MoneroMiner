@@ -12,6 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(randomx_sources
     src/aes_hash.cpp
+
     src/argon2_ref.c
     src/argon2_core.c
 
@@ -48,6 +49,21 @@ if(EMSCRIPTEN)
 
     set(RANDOMX_WASM ON)
 
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # RandomX native JIT is NOT supported in this WASM build.
+    #
+    # We use the interpreted VM and the project's own
+    # WebAssembly runtime/JIT externally.
+    # --------------------------------------------------------
+
+    add_compile_definitions(
+        RANDOMX_HAVE_COMPILER=0
+    )
+
+    message(STATUS "RandomX native JIT: DISABLED")
+    message(STATUS "RandomX VM: interpreted")
+
     option(
         RANDOMX_WASM_SIMD
         "Enable WebAssembly SIMD128"
@@ -61,12 +77,13 @@ if(EMSCRIPTEN)
     )
 
     # --------------------------------------------------------
-    # IMPORTANT:
-    # Do NOT compile native JIT backends.
+    # Argon2
+    #
+    # The portable/reference implementation is used on WASM.
+    # Do NOT compile x86 AVX2/SSSE3 implementations.
     # --------------------------------------------------------
 
-    message(STATUS "Native RandomX JIT: DISABLED")
-    message(STATUS "Backend: interpreted VM")
+    message(STATUS "Argon2 backend: reference")
 
     # --------------------------------------------------------
     # SIMD128
@@ -79,6 +96,10 @@ if(EMSCRIPTEN)
         add_compile_options(
             -msimd128
         )
+
+    else()
+
+        message(STATUS "WebAssembly SIMD128: DISABLED")
 
     endif()
 
@@ -93,6 +114,10 @@ if(EMSCRIPTEN)
         add_compile_options(
             -pthread
         )
+
+    else()
+
+        message(STATUS "WebAssembly pthreads: DISABLED")
 
     endif()
 
@@ -111,9 +136,16 @@ else()
         )
 
             list(APPEND randomx_sources
+
                 src/assembly_generator_x86.cpp
                 src/jit_compiler_x86.cpp
                 src/jit_compiler_x86_static.S
+
+                src/argon2_ssse3.c
+                src/argon2_avx2.c
+
+                src/vm_compiled.cpp
+                src/vm_compiled_light.cpp
             )
 
         endif()
@@ -184,10 +216,6 @@ if(NOT EMSCRIPTEN)
                 COMPILE_OPTIONS "-mssse3"
             )
 
-            list(APPEND randomx_sources
-                src/argon2_ssse3.c
-            )
-
         endif()
 
         check_c_compiler_flag(
@@ -201,10 +229,6 @@ if(NOT EMSCRIPTEN)
                 src/argon2_avx2.c
                 PROPERTIES
                 COMPILE_OPTIONS "-mavx2"
-            )
-
-            list(APPEND randomx_sources
-                src/argon2_avx2.c
             )
 
         endif()
@@ -241,7 +265,7 @@ if(EMSCRIPTEN)
             randomx
             PRIVATE
                 -pthread
-        )
+    )
 
     endif()
 
@@ -260,7 +284,8 @@ if(NOT EMSCRIPTEN)
 
     target_link_libraries(
         randomx-tests
-        PRIVATE randomx
+        PRIVATE
+            randomx
     )
 
     add_executable(
@@ -270,7 +295,8 @@ if(NOT EMSCRIPTEN)
 
     target_link_libraries(
         randomx-codegen
-        PRIVATE randomx
+        PRIVATE
+            randomx
     )
 
     add_executable(
