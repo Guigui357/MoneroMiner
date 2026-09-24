@@ -111,7 +111,8 @@ bool MiningThreadData::calculateHashAndCheckTarget(
     // RandomX writes the complete 32-byte result.
     randomx_calculate_hash(vm, blob.data(), blob.size(), hashOut.data());
 
-    totalHashes++;
+    hashCount.fetch_add(1, std::memory_order_relaxed);
+    totalHashes.fetch_add(1, std::memory_order_relaxed);
 
     // XMRig's RandomX share validation uses the high uint64 of the 32-byte
     // result. The Stratum target is likewise represented as a uint64.
