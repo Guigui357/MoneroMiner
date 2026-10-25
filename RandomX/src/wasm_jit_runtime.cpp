@@ -69,12 +69,12 @@ EM_JS(int, randomx_wasm_execute_module, (
     };
 
     try {
-        console.log(
-            '[WASM-JIT-DEBUG] =================================================='
-        );
-        console.log(
-            '[WASM-JIT-DEBUG] randomx_wasm_execute_module()'
-        );
+        
+
+
+        
+
+
 
         /*
          * --------------------------------------------------------------------
@@ -138,40 +138,40 @@ EM_JS(int, randomx_wasm_execute_module, (
             return ERR.INVALID_ARGUMENTS;
         }
 
-        console.log(
-            '[WASM-JIT-DEBUG] module_ptr =',
-            '0x' + (module_ptr >>> 0).toString(16)
-        );
+        
 
-        console.log(
-            '[WASM-JIT-DEBUG] module_size =',
-            module_size
-        );
 
-        console.log(
-            '[WASM-JIT-DEBUG] regs_ptr =',
-            '0x' + (regs_ptr >>> 0).toString(16)
-        );
 
-        console.log(
-            '[WASM-JIT-DEBUG] f_ptr =',
-            '0x' + (f_ptr >>> 0).toString(16)
-        );
 
-        console.log(
-            '[WASM-JIT-DEBUG] e_ptr =',
-            '0x' + (e_ptr >>> 0).toString(16)
-        );
+        
 
-        console.log(
-            '[WASM-JIT-DEBUG] a_ptr =',
-            '0x' + (a_ptr >>> 0).toString(16)
-        );
 
-        console.log(
-            '[WASM-JIT-DEBUG] scratchpad_ptr =',
-            '0x' + (scratchpad_ptr >>> 0).toString(16)
-        );
+
+
+        
+
+
+
+
+        
+
+
+
+
+        
+
+
+
+
+        
+
+
+
+
+        
+
+
+
 
         /*
          * --------------------------------------------------------------------
@@ -189,10 +189,10 @@ EM_JS(int, randomx_wasm_execute_module, (
         const heap = HEAPU8;
         const heapLength = heap.length >>> 0;
 
-        console.log(
-            '[WASM-JIT-DEBUG] HEAPU8.byteLength =',
-            heapLength
-        );
+        
+
+
+
 
         /*
          * module_ptr + module_size precisa estar dentro do HEAP.
@@ -239,10 +239,10 @@ EM_JS(int, randomx_wasm_execute_module, (
                 '[WASM-JIT-ERROR] Module.wasmMemory não encontrada'
             );
 
-            console.error(
-                '[WASM-JIT-DEBUG] Module keys:',
-                Object.keys(Module || {})
-            );
+            
+
+
+
 
             return ERR.MEMORY;
         }
@@ -274,15 +274,15 @@ EM_JS(int, randomx_wasm_execute_module, (
             return ERR.MEMORY;
         }
 
-        console.log(
-            '[WASM-JIT-DEBUG] memory =',
-            memory
-        );
+        
 
-        console.log(
-            '[WASM-JIT-DEBUG] memory.buffer.byteLength =',
-            memoryBuffer.byteLength
-        );
+
+
+
+        
+
+
+
 
         /*
          * --------------------------------------------------------------------
@@ -310,11 +310,11 @@ EM_JS(int, randomx_wasm_execute_module, (
                 return false;
             }
 
-            console.log(
-                '[WASM-JIT-DEBUG] pointer OK:',
-                name,
-                '0x' + p.toString(16)
-            );
+            
+
+
+
+
 
             return true;
         }
@@ -388,10 +388,10 @@ EM_JS(int, randomx_wasm_execute_module, (
             ':' +
             hash.toString(16);
 
-        console.log(
-            '[WASM-JIT-DEBUG] module cache key =',
-            key
-        );
+        
+
+
+
 
         /*
          * --------------------------------------------------------------------
@@ -416,20 +416,20 @@ EM_JS(int, randomx_wasm_execute_module, (
                 key
             );
 
-            console.log(
-                '[WASM-JIT-DEBUG] cached instance =',
-                instance
-            );
+            
 
-            console.log(
-                '[WASM-JIT-DEBUG] cached module =',
-                wasmModule
-            );
 
-            console.log(
-                '[WASM-JIT-DEBUG] cached function =',
-                fn
-            );
+
+
+            
+
+
+
+
+            
+
+
+
         } else {
             console.log(
                 '[WASM-JIT] Cache MISS:',
@@ -495,20 +495,20 @@ EM_JS(int, randomx_wasm_execute_module, (
                 return ERR.MODULE_CREATE;
             }
 
-            console.log(
-                '[WASM-JIT-DEBUG] MODULE IMPORTS:',
-                imports
-            );
+            
+
+
+
 
             for (let i = 0; i < imports.length; ++i) {
                 const imp = imports[i];
 
-                console.log(
-                    '[WASM-JIT-DEBUG] IMPORT[' + i + ']',
-                    'module=' + String(imp.module),
-                    'name=' + String(imp.name),
-                    'kind=' + String(imp.kind)
-                );
+                
+
+
+
+
+
             }
 
             /*
@@ -531,19 +531,19 @@ EM_JS(int, randomx_wasm_execute_module, (
                 return ERR.MODULE_CREATE;
             }
 
-            console.log(
-                '[WASM-JIT-DEBUG] MODULE EXPORTS:',
-                exportsList
-            );
+            
+
+
+
 
             for (let i = 0; i < exportsList.length; ++i) {
                 const exp = exportsList[i];
 
-                console.log(
-                    '[WASM-JIT-DEBUG] EXPORT[' + i + ']',
-                    'name=' + String(exp.name),
-                    'kind=' + String(exp.kind)
-                );
+                
+
+
+
+
             }
 
             /*
@@ -911,10 +911,10 @@ EM_JS(int, randomx_wasm_execute_module, (
              * ---------------------------------------------------------------
              */
 
-            console.log(
-                '[WASM-JIT-DEBUG] env import keys:',
-                Object.keys(env)
-            );
+            
+
+
+
 
             let importProblem = false;
 
@@ -1024,10 +1024,10 @@ EM_JS(int, randomx_wasm_execute_module, (
                 return ERR.EXPORT_MISSING;
             }
 
-            console.log(
-                '[WASM-JIT-DEBUG] INSTANCE EXPORTS:',
-                Object.keys(instance.exports)
-            );
+            
+
+
+
 
             /*
              * ---------------------------------------------------------------
@@ -1043,10 +1043,10 @@ EM_JS(int, randomx_wasm_execute_module, (
                     '[WASM-JIT-ERROR] export rx_jit não encontrado'
                 );
 
-                console.error(
-                    '[WASM-JIT-DEBUG] exports disponíveis:',
-                    Object.keys(instance.exports)
-                );
+                
+
+
+
 
                 return ERR.EXPORT_MISSING;
             }
@@ -1108,10 +1108,10 @@ EM_JS(int, randomx_wasm_execute_module, (
             return ERR.MEMORY;
         }
 
-        console.log(
-            '[WASM-JIT-DEBUG] memory.buffer antes do rx_jit =',
-            currentMemoryBuffer.byteLength
-        );
+        
+
+
+
 
         /*
          * Caso a memória tenha crescido desde a validação anterior,
@@ -1154,18 +1154,18 @@ EM_JS(int, randomx_wasm_execute_module, (
          * --------------------------------------------------------------------
          */
 
-        console.log(
-            '[WASM-JIT-DEBUG] BEFORE rx_jit'
-        );
+        
 
-        console.log(
-            '[WASM-JIT-DEBUG] rx_jit args:',
-            'regs=0x' + (regs_ptr >>> 0).toString(16),
-            'f=0x' + (f_ptr >>> 0).toString(16),
-            'e=0x' + (e_ptr >>> 0).toString(16),
-            'a=0x' + (a_ptr >>> 0).toString(16),
-            'scratchpad=0x' + (scratchpad_ptr >>> 0).toString(16)
-        );
+
+
+        
+
+
+
+
+
+
+
 
         let result;
 
@@ -1248,10 +1248,10 @@ EM_JS(int, randomx_wasm_execute_module, (
             return ERR.EXECUTE_TRAP;
         }
 
-        console.log(
-            '[WASM-JIT-DEBUG] AFTER rx_jit',
-            'return=' + String(result)
-        );
+        
+
+
+
 
         /*
          * --------------------------------------------------------------------
@@ -1269,14 +1269,14 @@ EM_JS(int, randomx_wasm_execute_module, (
 
         stats.executions++;
 
-        console.log(
-            '[WASM-JIT-DEBUG] executions =',
-            stats.executions
-        );
+        
 
-        console.log(
-            '[WASM-JIT-DEBUG] =================================================='
-        );
+
+
+
+        
+
+
 
         return ERR.OK;
 
@@ -1513,51 +1513,51 @@ bool WasmJit::execute(
      * ------------------------------------------------------------------------
      */
 
-    printf(
-        "[WASM-JIT-DEBUG] execute: "
-        "module=%p "
-        "size=%zu "
-        "regs=%p "
-        "f=%p "
-        "e=%p "
-        "a=%p "
-        "scratchpad=%p\n",
-        module_.data(),
-        module_.size(),
-        regs,
-        f,
-        e,
-        a,
-        scratchpad
-    );
+    
 
-    printf(
-        "[WASM-JIT-DEBUG] WASM32 args: "
-        "module=0x%08x "
-        "regs=0x%08x "
-        "f=0x%08x "
-        "e=0x%08x "
-        "a=0x%08x "
-        "scratchpad=0x%08x\n",
-        static_cast<unsigned int>(
-            static_cast<uint32_t>(modulePtr)
-        ),
-        static_cast<unsigned int>(
-            static_cast<uint32_t>(regsPtr)
-        ),
-        static_cast<unsigned int>(
-            static_cast<uint32_t>(fPtr)
-        ),
-        static_cast<unsigned int>(
-            static_cast<uint32_t>(ePtr)
-        ),
-        static_cast<unsigned int>(
-            static_cast<uint32_t>(aPtr)
-        ),
-        static_cast<unsigned int>(
-            static_cast<uint32_t>(scratchpadPtr)
-        )
-    );
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     /*
      * ------------------------------------------------------------------------
@@ -1576,10 +1576,10 @@ bool WasmJit::execute(
             scratchpadPtr
         );
 
-    printf(
-        "[WASM-JIT-DEBUG] randomx_wasm_execute_module -> %d\n",
-        status
-    );
+    
+
+
+
 
     /*
      * ------------------------------------------------------------------------
@@ -1588,16 +1588,16 @@ bool WasmJit::execute(
      */
 
     if (status != 0) {
-        printf(
-            "[WASM-JIT-DEBUG] JIT execution SUCCESS\n"
-        );
+        
+
+
 
         return true;
     }
 
-    printf(
-        "[WASM-JIT-DEBUG] JIT execution FAILED\n"
-    );
+    
+
+
 
     return false;
 }
