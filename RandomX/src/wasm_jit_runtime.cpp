@@ -406,13 +406,39 @@ EM_JS(int, randomx_wasm_execute_module, (
 
         let cached = cache[key] || null;
 
+        const jitStats =
+            Module.__randomxJitStats ||
+            (Module.__randomxJitStats = {
+                hits: 0,
+                misses: 0,
+                compiles: 0,
+                lookups: 0
+            });
+
+        jitStats.lookups++;
+
         let wasmModule = cached ? cached.module : null;
         let instance = cached ? cached.instance : null;
         let fn = cached ? cached.fn : null;
 
         if (cached && fn) {
-            // Cache hit: reuse the compiled module and function.
+            jitStats.hits++;
         } else {
+            jitStats.misses++;
+            jitStats.compiles++;
+
+        }
+
+        if (jitStats.lookups % 100 === 0) {
+            console.log(
+                '[WASM-JIT-STATS] lookups=' + jitStats.lookups +
+                ' HIT=' + jitStats.hits +
+                ' MISS=' + jitStats.misses +
+                ' compilations=' + jitStats.compiles
+            );
+        }
+
+        if (!(cached && fn)) {
 
             /*
              * ---------------------------------------------------------------
