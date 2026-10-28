@@ -28,6 +28,7 @@ namespace {
 // fail-safe process-wide so the first runtime failure disables the broken
 // generated module for all workers and prevents repeated WebKit traps/logs.
 std::atomic<bool> wasmJitGloballyDisabled{false};
+std::atomic<bool> wasmJitReadyLogged{false};
 }
 #endif
 
@@ -64,7 +65,11 @@ std::atomic<bool> wasmJitGloballyDisabled{false};
                 std::cerr << "[WASM-ERR] [WASM-JIT] compile failed; disabling JIT globally and using interpreter" << std::endl;
             }
             else {
-                std::cerr << "[WASM-JIT] custom JIT ready; hashing through generated WASM" << std::endl;
+                bool expected = false;
+                if (wasmJitReadyLogged.compare_exchange_strong(
+                        expected, true, std::memory_order_acq_rel)) {
+                    std::cerr << "[WASM-JIT] custom JIT ready; hashing through generated WASM" << std::endl;
+                }
             }
         }
         else {
