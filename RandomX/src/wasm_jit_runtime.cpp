@@ -411,20 +411,7 @@ EM_JS(int, randomx_wasm_execute_module, (
         let fn = cached ? cached.fn : null;
 
         if (cached && fn) {
-            
-
-
-
-
-            
-
-
-
-
-            
-
-
-
+            // Cache hit: reuse the compiled module and function.
         } else {
 
             /*
