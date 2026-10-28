@@ -425,8 +425,6 @@ EM_JS(int, randomx_wasm_execute_module, (
             jitStats.hits++;
         } else {
             jitStats.misses++;
-            jitStats.compiles++;
-
         }
 
         if (jitStats.lookups % 100 === 0) {
@@ -452,6 +450,7 @@ EM_JS(int, randomx_wasm_execute_module, (
 
             try {
                 wasmModule = new WebAssembly.Module(bytes);
+                jitStats.compiles++;
             } catch (e) {
                 console.error(
                     '[WASM-JIT-ERROR] WebAssembly.Module falhou'
