@@ -411,11 +411,6 @@ EM_JS(int, randomx_wasm_execute_module, (
         let fn = cached ? cached.fn : null;
 
         if (cached && fn) {
-            console.log(
-                '[WASM-JIT] Cache HIT:',
-                key
-            );
-
             
 
 
@@ -431,10 +426,6 @@ EM_JS(int, randomx_wasm_execute_module, (
 
 
         } else {
-            console.log(
-                '[WASM-JIT] Cache MISS:',
-                key
-            );
 
             /*
              * ---------------------------------------------------------------
